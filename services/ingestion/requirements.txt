@@ -3,7 +3,14 @@ uvicorn[standard]==0.32.0
 celery==5.4.0
 redis==5.1.1
 minio==7.2.9
-python-magic==0.4.27
+# uploader.py's MIME sniff wraps libmagic. On Linux/Docker (the real
+# deployment target) python-magic talks to the system libmagic1 package
+# (installed via apt in the Dockerfile). On Windows dev machines there's
+# usually no libmagic on PATH at all, which makes `import magic` hang or
+# crash outright — python-magic-bin bundles the DLL instead, so use that
+# there. Both packages provide the same top-level `magic` module.
+python-magic==0.4.27; sys_platform != "win32"
+python-magic-bin==0.4.14; sys_platform == "win32"
 pydantic==2.9.2
 sqlalchemy==2.0.35
 asyncpg==0.29.0
