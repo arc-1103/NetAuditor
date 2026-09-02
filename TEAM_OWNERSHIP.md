@@ -19,7 +19,7 @@ If it touches `services/schema/` or anything in `contracts/`, that's a
 cross-team change — open a PR, tag the other lane owners, don't just merge.
 
 ## Assign names here before you start
-- Ingestion + Gateway: ______________
+- Ingestion + Gateway: Aryan
 - Parsing / SLM: ______________
 - Compliance / OPA: ______________
 - Learning / RAG: ______________
