@@ -1,0 +1,92 @@
+# Skeleton — infra lane fills in build contexts / images.
+# Each service loads ITS OWN env_file so lanes stay decoupled.
+version: "3.9"
+
+networks:
+  audit-net:
+    internal: true
+    name: ${NETWORK_NAME:-audit-net}
+
+services:
+  postgres:
+    image: postgres:16
+    env_file: .env
+    networks: [audit-net]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7
+    networks: [audit-net]
+
+  minio:
+    image: minio/minio
+    env_file: .env
+    command: server /data
+    networks: [audit-net]
+
+  chromadb:
+    image: chromadb/chroma
+    networks: [audit-net]
+
+  opa:
+    image: openpolicyagent/opa
+    volumes: ["./services/compliance/policies:/policies"]
+    networks: [audit-net]
+
+  ollama:
+    image: ollama/ollama
+    networks: [audit-net]
+
+  batfish:
+    image: batfish/allinone
+    networks: [audit-net]
+
+  ingestion:
+    build: ./services/ingestion
+    env_file: ./services/ingestion/.env
+    depends_on: [redis, minio, postgres]
+    networks: [audit-net]
+
+  parsing:
+    build: ./services/parsing
+    env_file: ./services/parsing/.env
+    depends_on: [ollama, chromadb]
+    networks: [audit-net]
+
+  compliance:
+    build: ./services/compliance
+    env_file: ./services/compliance/.env
+    depends_on: [opa, postgres]
+    networks: [audit-net]
+
+  learning:
+    build: ./services/learning/backend
+    env_file: ./services/learning/.env
+    depends_on: [chromadb, postgres]
+    networks: [audit-net]
+
+  remediation:
+    build: ./services/remediation
+    env_file: ./services/remediation/.env
+    depends_on: [batfish]
+    networks: [audit-net]
+
+  reporting:
+    build: ./services/reporting
+    env_file: ./services/reporting/.env
+    depends_on: [postgres]
+    networks: [audit-net]
+
+  gateway:
+    build: ./gateway
+    env_file: ./gateway/.env
+    depends_on: [ingestion, compliance, learning, remediation, reporting]
+    networks: [audit-net]
+
+  frontend:
+    build: ./frontend
+    depends_on: [gateway]
+    networks: [audit-net]
+
+volumes:
+  pgdata:
