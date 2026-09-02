@@ -12,7 +12,9 @@ services:
     image: postgres:16
     env_file: .env
     networks: [audit-net]
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
 
   redis:
     image: redis:7

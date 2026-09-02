@@ -6,3 +6,8 @@ pydantic==2.9.2
 sqlalchemy==2.0.35
 asyncpg==0.29.0
 passlib[bcrypt]==1.7.4
+# passlib 1.7.4's bcrypt backend self-test crashes under bcrypt>=4.1 with
+# "password cannot be longer than 72 bytes" on the first hash()/verify()
+# call — breaks login entirely, not just a warning. Pin to the last
+# compatible release until passlib ships a fix.
+bcrypt==4.0.1

@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://netaudit.local/contracts/ingestion_job.schema.json",
+  "title": "IngestionJob",
+  "description": "Payload the Ingestion lane pushes to the Parsing lane via the Celery task `parsing.process_config` (Redis broker). Owned by Ingestion — see services/ingestion/app/queue_producer.py. Update this file and notify the Parsing lane before changing the shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "file_hash",
+    "storage_path",
+    "original_filename",
+    "uploaded_by",
+    "uploaded_at",
+    "chunk_count",
+    "chunks"
+  ],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID4 identifying this parsing job."
+    },
+    "file_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hex digest of the uploaded file's raw contents. Used for dedup."
+    },
+    "storage_path": {
+      "type": "string",
+      "description": "MinIO object key for the raw file, e.g. raw-configs/<file_hash><ext>."
+    },
+    "original_filename": {
+      "type": ["string", "null"],
+      "description": "Filename as supplied by the uploading client."
+    },
+    "uploaded_by": {
+      "type": "string",
+      "description": "Identity of the uploading user. Currently a hardcoded placeholder pending auth-context wiring from the Gateway's JWT through the upload proxy."
+    },
+    "uploaded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO-8601 timestamp of when the job was enqueued."
+    },
+    "chunk_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries in `chunks`."
+    },
+    "chunks": {
+      "type": "array",
+      "description": "The raw config split into logical blocks by app/chunker.py, in order. Currently a naive fixed-size line splitter (default 500 lines/block), not block-boundary-aware.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "text"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "0-based position of this block within the file."
+          },
+          "text": {
+            "type": "string",
+            "description": "Raw block text, newline-joined."
+          }
+        }
+      }
+    }
+  }
+}

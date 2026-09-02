@@ -1,0 +1,6 @@
+passlib[bcrypt]==1.7.4
+# See gateway/requirements.txt: passlib 1.7.4 + bcrypt>=4.1 crashes on
+# the first hash() call — pin to the last compatible bcrypt release.
+bcrypt==4.0.1
+sqlalchemy==2.0.35
+asyncpg==0.29.0
