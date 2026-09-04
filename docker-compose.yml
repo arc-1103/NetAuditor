@@ -20,19 +20,50 @@ services:
     image: redis:7
     networks: [audit-net]
 
+  # Raw config object store. MINIO_ROOT_USER/PASSWORD come from root .env and
+  # are what services/*/.env use as MINIO_ACCESS_KEY/MINIO_SECRET_KEY.
+  # The `raw-configs` bucket is created on first use by the ingestion service
+  # (services/ingestion/app/uploader.py::get_minio_client), so there's no
+  # bootstrap job here.
+  # NOTE: audit-net is internal, so the :9001 console is not reachable from the
+  # host. To look at it during development:
+  #   docker compose exec minio mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+  #   docker compose exec minio mc ls local/raw-configs
   minio:
     image: minio/minio
     env_file: .env
-    command: server /data
+    command: server /data --console-address ":9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks: [audit-net]
 
   chromadb:
     image: chromadb/chroma
     networks: [audit-net]
 
+  # Policy engine for the Compliance lane. Pinned: the Rego in
+  # services/compliance/policies/ is v1 syntax and was verified against this
+  # version — `opa test policies/` is the gate. The bundle is mounted, not
+  # baked into an image, so editing a .rego file needs only a container restart.
   opa:
-    image: openpolicyagent/opa
-    volumes: ["./services/compliance/policies:/policies"]
+    image: openpolicyagent/opa:1.20.2
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - /policies
+    volumes: ["./services/compliance/policies:/policies:ro"]
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "--fail", "data"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks: [audit-net]
 
   ollama:
@@ -55,10 +86,20 @@ services:
     depends_on: [ollama, chromadb]
     networks: [audit-net]
 
+  # Read side: serves GET /audit-runs/{id} to the Gateway, plus POST /evaluate.
   compliance:
     build: ./services/compliance
     env_file: ./services/compliance/.env
-    depends_on: [opa, postgres]
+    depends_on: [opa, postgres, redis]
+    networks: [audit-net]
+
+  # Write side: consumes the `compliance.evaluate_baseline` task the Parsing
+  # lane publishes. Same image, different command — see services/compliance/app/worker.py.
+  compliance-worker:
+    build: ./services/compliance
+    env_file: ./services/compliance/.env
+    command: python -m app.worker
+    depends_on: [opa, postgres, redis]
     networks: [audit-net]
 
   learning:
@@ -92,3 +133,4 @@ services:
 
 volumes:
   pgdata:
+  miniodata:
