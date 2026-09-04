@@ -1,0 +1,10 @@
+tests/
+policies/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+requirements-dev.txt
+conftest.py
+pytest.ini
+*.md
