@@ -21,7 +21,7 @@ cross-team change — open a PR, tag the other lane owners, don't just merge.
 ## Assign names here before you start
 - Ingestion + Gateway: Aryan
 - Parsing / SLM: ______________
-- Compliance / OPA: ______________
+- Compliance / OPA: Ayush
 - Learning / RAG: ______________
 - Remediation + Reporting: ______________
 - Frontend: ______________
