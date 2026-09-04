@@ -1,0 +1,176 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://netaudit.local/contracts/security_baseline.schema.json",
+  "title": "SecurityBaseline",
+  "description": "Vendor-neutral normalized device security configuration. Output of the Parsing lane, input of the Compliance lane (the OPA `input` document). Transcribed from master blueprint §4.1 (Pydantic v2 model) by the Compliance lane so it had a contract to build against — the Parsing/Schema lane owns `services/schema/` and should keep this file in step with it.",
+  "type": "object",
+  "required": ["schema_version", "device"],
+  "properties": {
+    "schema_version": { "type": "string", "default": "1.0.0" },
+    "device": {
+      "type": "object",
+      "required": ["detected_vendor", "config_sha256", "parsing_confidence"],
+      "properties": {
+        "raw_hostname": { "type": ["string", "null"] },
+        "detected_vendor": {
+          "type": "string",
+          "description": "Lowercase vendor key, e.g. 'cisco', 'juniper', 'paloalto', 'arista'. Rego policy packages dispatch on this value."
+        },
+        "detected_os": { "type": ["string", "null"], "description": "e.g. 'IOS-XE', 'JunOS', 'PAN-OS'" },
+        "detected_os_version": { "type": ["string", "null"] },
+        "detected_hardware_model": { "type": ["string", "null"] },
+        "config_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "parsing_confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Blueprint §4.1: below 0.60 the baseline goes to human review, not to Compliance."
+        },
+        "unknown_blocks_count": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "aaa": {
+      "type": "object",
+      "properties": {
+        "authentication_method": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered auth methods, e.g. ['tacacs+', 'local']"
+        },
+        "authorization_enabled": { "type": "boolean", "default": false },
+        "accounting_enabled": { "type": "boolean", "default": false },
+        "local_user_privilege_levels": { "type": "array", "items": { "type": "integer" } },
+        "password_encryption": { "$ref": "#/definitions/ProtocolStatus" },
+        "password_min_length": { "type": ["integer", "null"] },
+        "password_complexity_enabled": { "type": "boolean", "default": false }
+      }
+    },
+    "ssh": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "version": { "type": "string", "enum": ["1", "2", "1-2", "none"] },
+        "idle_timeout_seconds": { "type": ["integer", "null"] },
+        "authentication_retries": { "type": ["integer", "null"] },
+        "allowed_ciphers": { "type": "array", "items": { "type": "string" } },
+        "allowed_macs": { "type": "array", "items": { "type": "string" } },
+        "allowed_kex": { "type": "array", "items": { "type": "string" } },
+        "management_acl": { "type": ["string", "null"], "description": "ACL name/ID restricting SSH source IPs" }
+      }
+    },
+    "telnet": {
+      "type": "object",
+      "properties": {
+        "enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "vty_lines_with_telnet": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "snmp": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "version": { "type": "string", "enum": ["v1", "v2c", "v3", "none"] },
+        "community_strings": { "type": "array", "items": { "type": "string" } },
+        "auth_protocol": { "$ref": "#/definitions/HashAlgorithm" },
+        "priv_protocol": { "$ref": "#/definitions/EncryptionAlgorithm" },
+        "trap_host": { "type": ["string", "null"] },
+        "access_acl": { "type": ["string", "null"] }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "syslog_enabled": { "type": "boolean", "default": false },
+        "syslog_hosts": { "type": "array", "items": { "type": "string" } },
+        "syslog_severity_level": { "type": ["integer", "null"], "minimum": 0, "maximum": 7 },
+        "local_buffer_enabled": { "type": "boolean", "default": false },
+        "local_buffer_severity": { "type": ["integer", "null"] },
+        "timestamps_enabled": { "type": "boolean", "default": false },
+        "source_interface": { "type": ["string", "null"] }
+      }
+    },
+    "ntp": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "servers": { "type": "array", "items": { "type": "string" } },
+        "authentication_enabled": { "type": "boolean", "default": false },
+        "peer_auth_key_hash": { "$ref": "#/definitions/HashAlgorithm" },
+        "source_interface": { "type": ["string", "null"] }
+      }
+    },
+    "acl": {
+      "type": "object",
+      "properties": {
+        "ingress_acl_name": { "type": ["string", "null"] },
+        "ingress_acl_applied": { "type": "boolean", "default": false },
+        "egress_acl_name": { "type": ["string", "null"] },
+        "egress_acl_applied": { "type": "boolean", "default": false },
+        "ingress_entries": { "type": "array", "items": { "$ref": "#/definitions/ACLEntry" } },
+        "egress_entries": { "type": "array", "items": { "$ref": "#/definitions/ACLEntry" } },
+        "implicit_deny_present": { "type": "boolean", "default": false }
+      }
+    },
+    "crypto": {
+      "type": "object",
+      "properties": {
+        "ike_policies": { "type": "array", "items": { "$ref": "#/definitions/CryptoIKEPolicy" } },
+        "pki_enabled": { "type": "boolean", "default": false },
+        "certificate_auth": { "type": "boolean", "default": false },
+        "weak_ciphers_detected": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "banners": {
+      "type": "object",
+      "properties": {
+        "login_banner_present": { "type": "boolean", "default": false },
+        "motd_banner_present": { "type": "boolean", "default": false },
+        "banner_text_snippet": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    },
+    "services": {
+      "type": "object",
+      "description": "Each field is a ProtocolStatus. UNKNOWN means the parser could not determine the state — policy must not read that as DISABLED.",
+      "properties": {
+        "http_server_enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "https_server_enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "cdp_enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "lldp_enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "finger_service_enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "ip_source_route_enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "proxy_arp_enabled": { "$ref": "#/definitions/ProtocolStatus" },
+        "ip_directed_broadcast": { "$ref": "#/definitions/ProtocolStatus" },
+        "tcp_small_servers": { "$ref": "#/definitions/ProtocolStatus" },
+        "udp_small_servers": { "$ref": "#/definitions/ProtocolStatus" }
+      }
+    }
+  },
+  "definitions": {
+    "ProtocolStatus": { "type": "string", "enum": ["ENABLED", "DISABLED", "UNKNOWN"] },
+    "HashAlgorithm": { "type": "string", "enum": ["MD5", "SHA1", "SHA256", "SHA512", "NONE", "UNKNOWN"] },
+    "EncryptionAlgorithm": { "type": "string", "enum": ["DES", "3DES", "AES128", "AES256", "CHACHA20", "NONE", "UNKNOWN"] },
+    "ACLEntry": {
+      "type": "object",
+      "required": ["action", "protocol", "source", "destination"],
+      "properties": {
+        "sequence": { "type": ["integer", "null"] },
+        "action": { "type": "string", "enum": ["permit", "deny"] },
+        "protocol": { "type": "string" },
+        "source": { "type": "string" },
+        "destination": { "type": "string" },
+        "port": { "type": ["string", "null"] }
+      }
+    },
+    "CryptoIKEPolicy": {
+      "type": "object",
+      "properties": {
+        "policy_id": { "type": ["integer", "null"] },
+        "encryption": { "$ref": "#/definitions/EncryptionAlgorithm" },
+        "hash_algorithm": { "$ref": "#/definitions/HashAlgorithm" },
+        "dh_group": { "type": ["integer", "null"] },
+        "lifetime_seconds": { "type": ["integer", "null"] },
+        "authentication_method": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://netaudit.local/contracts/compliance_finding.schema.json",
+  "title": "ComplianceFinding",
+  "description": "One failed control produced by the OPA evaluation. Output of the Compliance lane, input of Remediation / Reporting / Frontend. Owned by Compliance — see services/compliance/. The `control_id`, `framework`, `title`, `status`, `severity`, `evidence` and `remediation` fields come verbatim out of the Rego `deny` rules (master blueprint §7); `risk_score` is added afterwards by app/risk_scorer.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["control_id", "framework", "title", "status", "severity", "evidence", "risk_score"],
+  "properties": {
+    "audit_run_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The AuditRun this finding belongs to. Present on persisted findings; absent on the raw Rego output."
+    },
+    "control_id": {
+      "type": "string",
+      "description": "Stable identifier of the control, e.g. 'CIS-IOS-1.1.1'. Unique within an audit run."
+    },
+    "framework": {
+      "type": "string",
+      "enum": ["CIS", "NIST", "STIG"],
+      "description": "Compliance framework the control belongs to."
+    },
+    "title": { "type": "string", "description": "Human-readable control statement shown in the dashboard and PDF report." },
+    "status": {
+      "type": "string",
+      "enum": ["FAIL"],
+      "description": "Only failures are emitted — a control absent from the findings list passed. Kept as a field because the PDF report and dashboard render it per row."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+      "description": "Assigned in the Rego rule, not derived at runtime, so the verdict stays reproducible."
+    },
+    "evidence": {
+      "type": "string",
+      "description": "The specific normalized value that triggered the failure, e.g. 'ssh.version = 1'. This is what makes the verdict auditable."
+    },
+    "remediation": {
+      "type": ["string", "null"],
+      "description": "Filename of the Jinja2 remediation template the Remediation lane should render, e.g. 'ios_ssh_v2_fix.j2'. Null when no template exists yet."
+    },
+    "risk_score": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Severity weight from app/risk_scorer.py. Summed across findings and subtracted from 100 to give the run's compliance_score."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp the finding was persisted. Set by Postgres, present on read-back only."
+    }
+  }
+}
