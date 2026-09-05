@@ -6,8 +6,9 @@ Run: uvicorn app.main:app --reload --port 8000
 import os
 import httpx
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.auth import get_current_user, authenticate_user, issue_token
 from app.db import get_session
 
@@ -38,7 +39,17 @@ class LearningMapRequest(BaseModel):
 
 class RemediationApproveRequest(BaseModel):
     approved: bool
+    # Optional at the gateway for backward compatibility; the remediation
+    # service returns a clear 422 when an ambiguous approval omits it.
+    audit_run_id: str | None = None
     comment: str | None = None
+
+
+class RemediationGenerateRequest(BaseModel):
+    audit_run_id: str
+    finding: dict
+    device: dict = Field(default_factory=dict)
+    variables: dict = Field(default_factory=dict)
 
 
 @app.get("/health")
@@ -120,9 +131,84 @@ async def approve_remediation(
         headers = {"X-User-Id": user["sub"]}
         resp = await client.post(
             f"{REMEDIATION_URL}/remediation/{control_id}/approve",
-            json=body.model_dump(),
+            json=body.model_dump(exclude_none=True),
             headers=headers,
         )
     if resp.status_code >= 400:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     return resp.json()
+
+
+@app.post("/api/remediation/generate")
+async def generate_remediation(body: RemediationGenerateRequest, user=Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{REMEDIATION_URL}/remediation/generate",
+            json=body.model_dump(),
+            headers={"X-User-Id": user["sub"]},
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@app.get("/api/remediation/audit-runs/{run_id}")
+async def list_remediations(run_id: str, user=Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{REMEDIATION_URL}/remediation/audit-runs/{run_id}")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@app.post("/api/remediation/audit-runs/{run_id}/generate")
+async def generate_run_remediations(run_id: str, user=Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{REMEDIATION_URL}/remediation/audit-runs/{run_id}/generate",
+            headers={"X-User-Id": user["sub"]},
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@app.get("/api/reports/{run_id}/download")
+async def download_report(run_id: str, user=Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{REPORTING_URL}/reports/{run_id}/download")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    disposition = resp.headers.get("content-disposition", f'attachment; filename="netaudit-{run_id}.pdf"')
+    return Response(resp.content, media_type="application/pdf", headers={"Content-Disposition": disposition})
+
+
+@app.get("/api/reports/{run_id}/preview")
+async def preview_report(run_id: str, user=Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{REPORTING_URL}/reports/{run_id}/preview")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return Response(resp.content, media_type="text/html")
+
+
+@app.get("/api/reports/{run_id}/json")
+async def json_report(run_id: str, user=Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{REPORTING_URL}/reports/{run_id}/json")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@app.get("/api/reports/{run_id}/cef")
+async def cef_report(run_id: str, user=Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{REPORTING_URL}/reports/{run_id}/cef")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return Response(
+        resp.content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="netaudit-{run_id}.cef"'},
+    )

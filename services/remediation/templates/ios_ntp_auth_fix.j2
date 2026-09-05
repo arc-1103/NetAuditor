@@ -1,0 +1,9 @@
+! CIS-IOS-1.4.1 - Enable NTP authentication
+! REVIEW: replace the key placeholder before deployment
+configure terminal
+ntp authenticate
+ntp authentication-key {{ ntp_key_id | default(1) }} sha1 {{ ntp_key | default('<REPLACE_NTP_KEY>') }}
+ntp trusted-key {{ ntp_key_id | default(1) }}
+end
+write memory
+

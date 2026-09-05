@@ -1,0 +1,8 @@
+! CIS-IOS-1.6.1 - Configure an authorized-use warning
+configure terminal
+banner login ^
+{{ login_banner | default('Authorized access only. Activity may be monitored and reported.') }}
+^
+end
+write memory
+

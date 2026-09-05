@@ -1,0 +1,10 @@
+! CIS-IOS-1.8.1 - Enable remote, timestamped system logging
+! REVIEW: confirm the collector address before deployment
+configure terminal
+service timestamps log datetime msec show-timezone
+logging host {{ syslog_host | default('10.0.0.10') }}
+logging trap warnings
+logging on
+end
+write memory
+

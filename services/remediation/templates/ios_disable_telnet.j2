@@ -1,0 +1,7 @@
+! CIS-IOS-1.1.2 - Disable Telnet while retaining SSH access
+configure terminal
+line vty 0 15
+ transport input ssh
+end
+write memory
+

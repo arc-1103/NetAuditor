@@ -1,0 +1,9 @@
+! CIS-IOS-1.3.1 - Replace weak IKE encryption
+configure terminal
+crypto isakmp policy {{ ike_policy_id | default(10) }}
+ encryption aes 256
+ hash sha256
+ group 14
+end
+write memory
+

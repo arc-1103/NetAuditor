@@ -1,0 +1,8 @@
+! CIS-IOS-1.2.1 - Configure authenticated and encrypted SNMPv3
+! Secrets are intentionally placeholders and must be replaced before deployment
+configure terminal
+snmp-server group {{ snmp_group | default('NETAUDIT-V3') }} v3 priv
+snmp-server user {{ snmp_user | default('netaudit-monitor') }} {{ snmp_group | default('NETAUDIT-V3') }} v3 auth sha {{ snmp_auth_secret | default('<REPLACE_AUTH_SECRET>') }} priv aes 256 {{ snmp_priv_secret | default('<REPLACE_PRIV_SECRET>') }}
+end
+write memory
+

@@ -111,13 +111,15 @@ services:
   remediation:
     build: ./services/remediation
     env_file: ./services/remediation/.env
-    depends_on: [batfish]
+    depends_on: [batfish, postgres]
     networks: [audit-net]
 
   reporting:
     build: ./services/reporting
     env_file: ./services/reporting/.env
     depends_on: [postgres]
+    volumes:
+      - reportdata:/data/reports
     networks: [audit-net]
 
   gateway:
@@ -125,6 +127,8 @@ services:
     env_file: ./gateway/.env
     depends_on: [ingestion, compliance, learning, remediation, reporting]
     networks: [audit-net]
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
 
   frontend:
     build: ./frontend
@@ -134,3 +138,4 @@ services:
 volumes:
   pgdata:
   miniodata:
+  reportdata:
