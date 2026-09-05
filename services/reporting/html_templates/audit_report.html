@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NetAudit Report — {{ run.original_filename or run.id }}</title>
+  <style>
+    @page { size: A4; margin: 18mm; @bottom-right { content: "Page " counter(page) " of " counter(pages); color: #64748b; font-size: 9px; } }
+    * { box-sizing: border-box; }
+    body { font-family: "DejaVu Sans", sans-serif; color: #172033; font-size: 10px; line-height: 1.45; }
+    h1 { color: #112b46; font-size: 25px; margin: 0; }
+    h2 { color: #112b46; border-bottom: 2px solid #16a3a3; padding-bottom: 5px; margin-top: 24px; }
+    .brand { color: #16a3a3; font-weight: 700; letter-spacing: 1px; }
+    .meta { color: #64748b; margin-top: 5px; }
+    .score-grid { display: flex; gap: 10px; margin: 20px 0; }
+    .score { flex: 1; border: 1px solid #dbe3ec; border-radius: 6px; padding: 12px; text-align: center; }
+    .score strong { display: block; font-size: 23px; color: #112b46; }
+    .severity { font-weight: 700; }
+    .CRITICAL { color: #991b1b; } .HIGH { color: #c2410c; } .MEDIUM { color: #a16207; } .LOW { color: #1d4ed8; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+    th { background: #112b46; color: white; text-align: left; }
+    th, td { border: 1px solid #dbe3ec; padding: 7px; vertical-align: top; }
+    tr { break-inside: avoid; }
+    .finding { border-left: 4px solid #16a3a3; padding: 8px 12px; margin: 12px 0; break-inside: avoid; }
+    pre { white-space: pre-wrap; background: #f1f5f9; padding: 9px; border-radius: 4px; font-size: 8px; }
+    .notice { background: #fff7ed; border: 1px solid #fed7aa; padding: 9px; }
+    footer { margin-top: 30px; color: #64748b; font-size: 8px; }
+  </style>
+</head>
+<body>
+  <div class="brand">NETAUDIT ENGINE · SIH 2026</div>
+  <h1>Network Security Compliance Report</h1>
+  <div class="meta">Audit {{ run.id }} · {{ run.original_filename or "Unnamed configuration" }} · Generated {{ generated_at }}</div>
+
+  <div class="score-grid">
+    <div class="score"><strong>{{ summary.compliance_score }}%</strong>Compliance score</div>
+    <div class="score"><strong>{{ summary.total_findings }}</strong>Failed controls</div>
+    <div class="score"><strong>{{ summary.risk_score }}</strong>Aggregate risk</div>
+  </div>
+
+  <h2>Executive Summary</h2>
+  <table>
+    <tr><th>Critical</th><th>High</th><th>Medium</th><th>Low</th><th>Run status</th></tr>
+    <tr><td>{{ summary.by_severity.CRITICAL }}</td><td>{{ summary.by_severity.HIGH }}</td><td>{{ summary.by_severity.MEDIUM }}</td><td>{{ summary.by_severity.LOW }}</td><td>{{ run.status }}</td></tr>
+  </table>
+
+  <h2>Audit Evidence</h2>
+  {% if findings %}
+  <table>
+    <thead><tr><th>Control</th><th>Severity</th><th>Finding</th><th>Evidence</th><th>Risk</th></tr></thead>
+    <tbody>{% for finding in findings %}<tr>
+      <td>{{ finding.control_id }}<br>{{ finding.framework }}</td>
+      <td class="severity {{ finding.severity }}">{{ finding.severity }}</td>
+      <td>{{ finding.title }}</td><td>{{ finding.evidence }}</td><td>{{ finding.risk_score }}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p>No failed controls were recorded for this audit.</p>{% endif %}
+
+  <h2>Remediation Plan</h2>
+  <p class="notice">Generated commands require administrator review. Only proposals with a SAFE preflight may be approved; take a configuration backup and use a maintenance window.</p>
+  {% for finding in findings %}
+    {% set remediation = remediations.get(finding.control_id) %}
+    <div class="finding">
+      <strong>{{ finding.control_id }} — {{ finding.title }}</strong>
+      {% if remediation %}
+        <p>Preflight: <b>{{ remediation.preflight_status }}</b> · Approval: <b>{{ remediation.approval_status }}</b></p>
+        {% if remediation.risk_flags %}<p>Risk flags: {{ remediation.risk_flags | join('; ') }}</p>{% endif %}
+        <pre>{{ remediation.script }}</pre>
+      {% else %}<p>Template: {{ finding.remediation or "Not available" }}. Generate and validate the remediation proposal before deployment.</p>{% endif %}
+    </div>
+  {% endfor %}
+
+  <h2>Integrity & Method</h2>
+  <p>Configuration SHA-256: <code>{{ run.file_hash }}</code></p>
+  <p>Compliance decisions were produced by deterministic OPA policies. Remediation commands were rendered from version-controlled Jinja2 templates; AI does not decide compliance or generate free-form device commands.</p>
+  <footer>NetAudit Engine prototype · This report is an engineering aid and does not replace an authorized change-management process.</footer>
+</body>
+</html>
+

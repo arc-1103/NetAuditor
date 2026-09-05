@@ -5,6 +5,7 @@ pyjwt==2.9.0
 pydantic==2.9.2
 sqlalchemy==2.0.35
 asyncpg==0.29.0
+python-multipart==0.0.12
 passlib[bcrypt]==1.7.4
 # passlib 1.7.4's bcrypt backend self-test crashes under bcrypt>=4.1 with
 # "password cannot be longer than 72 bytes" on the first hash()/verify()

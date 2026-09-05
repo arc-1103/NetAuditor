@@ -222,3 +222,22 @@ def test_approve_remediation_proxies_control_id_in_path(client, fake_proxy):
     call = last_proxy_call()
     assert call["url"].endswith("/remediation/AC-2/approve")
     assert call["kwargs"]["json"] == {"approved": True, "comment": "looks safe"}
+
+
+def test_generate_all_remediations_for_run(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"audit_run_id": "run-1", "generated": 3}))
+
+    resp = client.post("/api/remediation/audit-runs/run-1/generate")
+
+    assert resp.status_code == 200
+    assert resp.json()["generated"] == 3
+    assert last_proxy_call()["url"].endswith("/remediation/audit-runs/run-1/generate")
+
+
+def test_list_remediations_for_run(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"audit_run_id": "run-1", "remediations": []}))
+
+    resp = client.get("/api/remediation/audit-runs/run-1")
+
+    assert resp.status_code == 200
+    assert resp.json()["remediations"] == []

@@ -1,0 +1,7 @@
+! CIS-IOS-1.2.2 - Remove insecure default SNMP communities
+configure terminal
+no snmp-server community public
+no snmp-server community private
+end
+write memory
+
