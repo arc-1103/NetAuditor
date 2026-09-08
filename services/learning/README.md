@@ -1,15 +1,47 @@
-# learning service
 
-Owner: see /TEAM_OWNERSHIP.md
+# Learning / RAG Service
 
-## Run standalone
-```
-cp .env.example .env
-docker compose up learning
-```
+Owner: Sanjeevani
 
-## What this service depends on (via contract, not code)
-See /contracts/ for the JSON shapes this service sends or receives.
+## Overview
 
-## Mocking so you don't block on other lanes
-Check .env.example for a USE_MOCK_* flag before assuming you need the full stack.
+The Learning/RAG service stores confirmed network configuration mappings
+and retrieves previously learned mappings using semantic similarity.
+
+## Technology
+
+- FastAPI
+- ChromaDB
+- SentenceTransformers
+- all-MiniLM-L6-v2 embeddings
+- Docker
+
+## API
+
+### Health
+
+`GET /health`
+
+Returns the service health status.
+
+### Learning Queue
+
+`GET /learning/queue`
+
+Returns unrecognized configuration blocks awaiting mapping.
+
+### Store Mapping
+
+`POST /learning/map`
+
+Stores a confirmed mapping in ChromaDB.
+
+Example:
+
+```json
+{
+  "block_id": "demo-1",
+  "cli_pattern": "crypto isakmp policy 10 / hash sha256",
+  "field": "crypto.ike.hash_algorithm",
+  "value": "SHA256"
+}
