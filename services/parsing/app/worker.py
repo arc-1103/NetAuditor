@@ -17,8 +17,10 @@ from .grammar_constraints import GrammarConstraints
 from .merge import merge_baselines
 from .models import DeviceContext, UnknownBlock
 from .normalizer import normalize_candidate
+from .parse_cache import ParseCacheProvider, build_parse_cache_provider
 from .prompts import build_prompt
 from .rag import LearningRAGContextProvider, RAGContextProvider
+from .reverse_translation import compute_fidelity
 from .schema_validator import BaselineValidator
 from .slm_client import OllamaSLMClient, SLMError
 from .vendor_detector import detect_job_context
@@ -42,6 +44,10 @@ _rag: RAGContextProvider = LearningRAGContextProvider(
     ambiguous_max_distance=settings.rag_ambiguous_max_distance,
 )
 _vendor_fingerprint: VendorFingerprintProvider = LearningVendorFingerprintProvider(settings.learning_url)
+_parse_cache: ParseCacheProvider = build_parse_cache_provider(
+    enabled=settings.enable_parse_cache,
+    redis_url=settings.parse_cache_redis_url,
+)
 
 
 class IngestionPayloadError(ValueError):
@@ -101,6 +107,38 @@ def validate_ingestion_job(job: dict[str, Any]) -> dict[str, Any]:
     return job
 
 
+async def _check_reverse_translation_fidelity(
+    candidate: dict[str, Any],
+    device_context: DeviceContext,
+    *,
+    slm: OllamaSLMClient,
+    rag_context: str,
+) -> float | None:
+    """Agent B: reconstruct CLI from only the normalized JSON, then re-run
+    forward extraction on that reconstruction and diff against the original
+    candidate (reverse_translation.compute_fidelity).
+
+    Returns None — "no signal", not "failed" — when the SLM call itself
+    errors or produces nothing to compare. An Ollama hiccup on this
+    second-order check is not evidence the *original* extraction was wrong,
+    so it must not be treated as a fidelity failure; this mirrors how a
+    missing mean_logprob is never treated as low confidence.
+    """
+    try:
+        reconstructed_cli = await slm.reverse_translate(candidate, device_context)
+        if not reconstructed_cli.strip():
+            return None
+        roundtrip_prompt = build_prompt(reconstructed_cli, device_context.vendor, device_context.os, rag_context)
+        roundtrip_result = await slm.generate(
+            roundtrip_prompt, reconstructed_cli, _grammar.json_schema(), device_context=device_context
+        )
+        roundtrip_candidate = normalize_candidate(roundtrip_result.value)
+    except (SLMError, ValueError, TypeError) as exc:
+        logger.warning("Reverse-translation fidelity check unavailable: %s", exc)
+        return None
+    return compute_fidelity(candidate, roundtrip_candidate)
+
+
 async def _parse_chunk(
     chunk: dict[str, Any],
     file_hash: str,
@@ -108,35 +146,79 @@ async def _parse_chunk(
     *,
     slm_client: OllamaSLMClient | None = None,
     rag_provider: RAGContextProvider | None = None,
+    parse_cache: ParseCacheProvider | None = None,
 ) -> tuple[SecurityBaseline | None, UnknownBlock | None]:
     text = chunk["text"]
     slm = slm_client or _slm
     rag = rag_provider or _rag
+    cache = parse_cache or _parse_cache
 
     try:
-        try:
-            rag_context = await rag.retrieve(device_context.vendor, device_context.os, text)
-        except Exception as exc:
-            # Learning/RAG is optional. A ChromaDB/provider outage must not
-            # turn an otherwise parseable device into a failed Parsing job.
-            logger.warning("RAG enrichment unavailable for chunk %s: %s", chunk["index"], exc)
-            rag_context = ""
+        cached_candidate = await cache.get(device_context.vendor, device_context.os, text)
+        if cached_candidate is not None:
+            # A cache hit means this exact chunk (same vendor/os, identical
+            # up to whitespace) already passed the logprob and
+            # reverse-translation gates once — no need to re-spend SLM
+            # calls re-verifying it. Only the device-context overlay below
+            # (this job's own vendor/os/file hash) is ever applied fresh.
+            raw_candidate = cached_candidate
+            candidate = cached_candidate
+        else:
+            try:
+                rag_context = await rag.retrieve(device_context.vendor, device_context.os, text)
+            except Exception as exc:
+                # Learning/RAG is optional. A ChromaDB/provider outage must not
+                # turn an otherwise parseable device into a failed Parsing job.
+                logger.warning("RAG enrichment unavailable for chunk %s: %s", chunk["index"], exc)
+                rag_context = ""
 
-        prompt = build_prompt(
-            text,
-            device_context.vendor,
-            device_context.os,
-            rag_context,
-        )
-        slm_result = await slm.generate(
-            prompt,
-            text,
-            _grammar.json_schema(),
-            device_context=device_context,
-        )
-        raw_candidate = slm_result.value
-        mean_logprob = slm_result.mean_logprob
-        candidate = normalize_candidate(raw_candidate)
+            prompt = build_prompt(
+                text,
+                device_context.vendor,
+                device_context.os,
+                rag_context,
+            )
+            slm_result = await slm.generate(
+                prompt,
+                text,
+                _grammar.json_schema(),
+                device_context=device_context,
+            )
+            raw_candidate = slm_result.value
+            mean_logprob = slm_result.mean_logprob
+            candidate = normalize_candidate(raw_candidate)
+
+            if mean_logprob is not None and mean_logprob < settings.logprob_uncertainty_threshold:
+                return None, UnknownBlock(
+                    chunk_index=chunk["index"],
+                    text=text,
+                    reason=(
+                        f"low_token_confidence: mean_logprob={mean_logprob:.3f} "
+                        f"< threshold={settings.logprob_uncertainty_threshold}"
+                    ),
+                    candidate=raw_candidate,
+                )
+
+            if settings.enable_reverse_translation:
+                fidelity = await _check_reverse_translation_fidelity(
+                    candidate, device_context, slm=slm, rag_context=rag_context
+                )
+                if fidelity is not None and fidelity < settings.reverse_translation_fidelity_threshold:
+                    return None, UnknownBlock(
+                        chunk_index=chunk["index"],
+                        text=text,
+                        reason=(
+                            f"reverse_translation_fidelity_below_threshold: fidelity={fidelity:.3f} "
+                            f"< threshold={settings.reverse_translation_fidelity_threshold}"
+                        ),
+                        candidate=raw_candidate,
+                    )
+
+            # Cache only a gate-passing candidate, pre-overlay (vendor/os/
+            # hash are always re-applied fresh below, per job) — a failed
+            # chunk is never cached, since it might succeed later with
+            # better RAG context or an improved model.
+            await cache.set(device_context.vendor, device_context.os, text, candidate)
 
         device = candidate["device"]
         model_vendor = device.get("detected_vendor")
@@ -160,26 +242,6 @@ async def _parse_chunk(
         }
 
         baseline = SecurityBaseline.model_validate(candidate)
-
-        # Active learning via token uncertainty: a low mean logprob means the
-        # model itself was unsure about the tokens it generated, independent
-        # of whether the resulting JSON happens to look complete and valid.
-        # Route it the same way a schema-validation failure is routed — to
-        # the Learning lane's unknown-block queue for a human GUI review —
-        # rather than silently publishing a baseline the model wasn't
-        # confident about. `None` means the backend gave no logprob signal at
-        # all, which must not be treated as low confidence.
-        if mean_logprob is not None and mean_logprob < settings.logprob_uncertainty_threshold:
-            return None, UnknownBlock(
-                chunk_index=chunk["index"],
-                text=text,
-                reason=(
-                    f"low_token_confidence: mean_logprob={mean_logprob:.3f} "
-                    f"< threshold={settings.logprob_uncertainty_threshold}"
-                ),
-                candidate=raw_candidate,
-            )
-
         return baseline, None
 
     except (SLMError, ValueError, TypeError) as exc:

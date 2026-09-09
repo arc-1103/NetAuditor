@@ -10,3 +10,6 @@ pydantic==2.9.2
 # required" — Linux/Docker happens to get it anyway, which is what hides it.
 sqlalchemy[asyncio]==2.0.35
 asyncpg==0.29.0
+# GraphRAG topology client (app/graph_client.py) — async driver for the
+# blast-radius traversal over routing adjacency.
+neo4j==5.24.0

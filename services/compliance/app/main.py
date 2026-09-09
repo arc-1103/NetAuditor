@@ -11,11 +11,19 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app import db
-from app.evaluator import evaluate_baseline
+from app.evaluator import evaluate_baseline, shutdown_graph_provider
 from app.opa_client import OPAEvaluationError
 from app.risk_scorer import summarize
 
 app = FastAPI(title="netaudit-compliance")
+
+
+@app.on_event("shutdown")
+async def _close_graph_provider() -> None:
+    """The topology graph driver (app/evaluator.py) is built once and reused
+    for the app's lifetime; close it at process exit rather than leaking the
+    connection."""
+    await shutdown_graph_provider()
 
 
 class EvaluateRequest(BaseModel):

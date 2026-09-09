@@ -32,6 +32,42 @@ def test_html_contains_evidence_and_approved_script():
     assert "APPROVED" in html
 
 
+def test_html_flags_agentic_rag_remediation_and_shows_rollback():
+    """A machine-synthesized proposal must never look like a reviewed
+    template in the report — see the safety design in
+    services/remediation/app/main.py and README.md."""
+    data = sample_data()
+    data["remediations"][0].update(
+        source="agentic_rag",
+        rollback_script="no ip ssh version 2",
+        preflight_status="RISK_FLAGS",
+        approval_status="PENDING",
+    )
+    html = pdf_service.render_html(data)
+
+    assert "AI-synthesized remediation" in html
+    assert "no ip ssh version 2" in html
+
+
+def test_html_does_not_flag_a_template_remediation_as_ai_synthesized():
+    html = pdf_service.render_html(sample_data())
+    assert "AI-synthesized remediation" not in html
+
+
+def test_html_shows_blast_radius_device_count():
+    data = sample_data()
+    data["findings"][0]["blast_radius"] = ["b" * 64, "c" * 64]
+    html = pdf_service.render_html(data)
+    assert "2 device(s)" in html
+
+
+def test_integrity_section_does_not_make_a_blanket_no_ai_claim():
+    """The report must not claim every remediation came from a
+    version-controlled template once the agentic RAG fallback exists."""
+    html = pdf_service.render_html(sample_data())
+    assert "AI does not decide compliance or generate free-form device commands" not in html
+
+
 def test_generates_real_pdf(tmp_path, monkeypatch):
     monkeypatch.setattr(pdf_service, "OUTPUT_DIR", tmp_path)
     output = pdf_service.generate_pdf(RUN_ID, sample_data())

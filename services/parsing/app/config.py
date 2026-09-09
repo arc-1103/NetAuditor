@@ -26,6 +26,20 @@ class Settings:
     rag_correct_max_distance: float = float(os.getenv("RAG_CORRECT_MAX_DISTANCE", "0.4"))
     rag_ambiguous_max_distance: float = float(os.getenv("RAG_AMBIGUOUS_MAX_DISTANCE", "0.8"))
     logprob_uncertainty_threshold: float = float(os.getenv("LOGPROB_UNCERTAINTY_THRESHOLD", "-0.5"))
+    # Exact-hash parse cache (app/parse_cache.py): a byte-identical (up to
+    # whitespace) [vendor, os, chunk text] skips RAG + SLM entirely on
+    # repeat — enterprise fleets repeat the same NTP/Syslog/AAA blocks
+    # across hundreds of devices. Separate Redis logical DB from the
+    # Celery broker (db 0) so a cache flush can never touch queued messages.
+    enable_parse_cache: bool = _bool("ENABLE_PARSE_CACHE", True)
+    parse_cache_redis_url: str = os.getenv("PARSE_CACHE_REDIS_URL", "redis://redis:6379/1")
+    # Multi-agent reverse translation (app/reverse_translation.py) roughly
+    # triples SLM calls per chunk (forward, reverse, forward again) — this
+    # switch lets it be turned off for cost without a code change.
+    enable_reverse_translation: bool = _bool("ENABLE_REVERSE_TRANSLATION", True)
+    reverse_translation_fidelity_threshold: float = float(
+        os.getenv("REVERSE_TRANSLATION_FIDELITY_THRESHOLD", "0.7")
+    )
 
 
 settings = Settings()

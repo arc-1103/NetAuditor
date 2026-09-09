@@ -23,6 +23,7 @@
     .finding { border-left: 4px solid #16a3a3; padding: 8px 12px; margin: 12px 0; break-inside: avoid; }
     pre { white-space: pre-wrap; background: #f1f5f9; padding: 9px; border-radius: 4px; font-size: 8px; }
     .notice { background: #fff7ed; border: 1px solid #fed7aa; padding: 9px; }
+    .ai-notice { background: #fef2f2; border: 1px solid #fecaca; padding: 9px; color: #991b1b; }
     footer { margin-top: 30px; color: #64748b; font-size: 8px; }
   </style>
 </head>
@@ -46,11 +47,12 @@
   <h2>Audit Evidence</h2>
   {% if findings %}
   <table>
-    <thead><tr><th>Control</th><th>Severity</th><th>Finding</th><th>Evidence</th><th>Risk</th></tr></thead>
+    <thead><tr><th>Control</th><th>Severity</th><th>Finding</th><th>Evidence</th><th>Risk</th><th>Blast radius</th></tr></thead>
     <tbody>{% for finding in findings %}<tr>
       <td>{{ finding.control_id }}<br>{{ finding.framework }}</td>
       <td class="severity {{ finding.severity }}">{{ finding.severity }}</td>
       <td>{{ finding.title }}</td><td>{{ finding.evidence }}</td><td>{{ finding.risk_score }}</td>
+      <td>{% if finding.blast_radius %}{{ finding.blast_radius | length }} device(s){% else %}—{% endif %}</td>
     </tr>{% endfor %}</tbody>
   </table>
   {% else %}<p>No failed controls were recorded for this audit.</p>{% endif %}
@@ -62,16 +64,25 @@
     <div class="finding">
       <strong>{{ finding.control_id }} — {{ finding.title }}</strong>
       {% if remediation %}
+        {% if remediation.source == 'agentic_rag' %}
+        <p class="ai-notice"><b>⚠ AI-synthesized remediation</b> — no committed template exists for
+          this control's vendor. This proposal cannot be approved through the normal flow and
+          requires manual verification against real vendor documentation before use.</p>
+        {% endif %}
         <p>Preflight: <b>{{ remediation.preflight_status }}</b> · Approval: <b>{{ remediation.approval_status }}</b></p>
         {% if remediation.risk_flags %}<p>Risk flags: {{ remediation.risk_flags | join('; ') }}</p>{% endif %}
         <pre>{{ remediation.script }}</pre>
+        {% if remediation.rollback_script %}
+        <p>Rollback (run if this change drops connectivity):</p>
+        <pre>{{ remediation.rollback_script }}</pre>
+        {% endif %}
       {% else %}<p>Template: {{ finding.remediation or "Not available" }}. Generate and validate the remediation proposal before deployment.</p>{% endif %}
     </div>
   {% endfor %}
 
   <h2>Integrity & Method</h2>
   <p>Configuration SHA-256: <code>{{ run.file_hash }}</code></p>
-  <p>Compliance decisions were produced by deterministic OPA policies. Remediation commands were rendered from version-controlled Jinja2 templates; AI does not decide compliance or generate free-form device commands.</p>
+  <p>Compliance decisions were produced by deterministic OPA policies and are never influenced by an LLM. Remediation commands are rendered from version-controlled Jinja2 templates wherever one exists for the control's vendor; a control with no committed template instead gets a machine-synthesized proposal, marked "AI-synthesized" above, which carries a mandatory rollback script and can never be approved through the normal flow without manual verification.</p>
   <footer>NetAudit Engine prototype · This report is an engineering aid and does not replace an authorized change-management process.</footer>
 </body>
 </html>

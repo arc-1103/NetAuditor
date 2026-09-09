@@ -1,6 +1,11 @@
 -- Runs automatically on first `docker compose up postgres` via
 -- docker-entrypoint-initdb.d (only fires against an empty data volume).
 -- Referenced by gateway/app/auth.py and scripts/seed_admin.py.
+--
+-- Deploying a schema change to an EXISTING database: this file will not
+-- re-run against a populated pgdata volume. Apply infra/postgres/migrations/
+-- in order by hand (psql "$POSTGRES_DSN" -f infra/postgres/migrations/<file>)
+-- before deploying code that depends on the new columns.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -75,6 +80,11 @@ CREATE TABLE IF NOT EXISTS compliance_findings (
     evidence      TEXT,
     remediation   TEXT,
     risk_score    INTEGER NOT NULL DEFAULT 0,
+    -- GraphRAG blast radius (see services/compliance/app/graph_client.py):
+    -- device ids reachable from this finding's device via routing adjacency.
+    -- Empty when the topology graph is unavailable or the device has no
+    -- known routing neighbors, not when the finding is absent.
+    blast_radius  JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (audit_run_id, control_id)
 );
@@ -83,6 +93,24 @@ CREATE TABLE IF NOT EXISTS compliance_findings (
 CREATE INDEX IF NOT EXISTS idx_findings_run_severity
     ON compliance_findings (audit_run_id, severity);
 
+-- Unsupervised semantic anomaly detection (services/compliance/app/anomaly_client.py).
+-- A separate table from compliance_findings, not a column on it: this is a
+-- statistical signal (IsolationForest over a vendor+OS peer cohort's
+-- embeddings, computed by services/learning) that can flip over time as
+-- more peers get scanned, with nothing about the baseline itself changing —
+-- unlike a compliance_findings row, which the same baseline always
+-- reproduces identically. One row per audit run, not per control.
+CREATE TABLE IF NOT EXISTS configuration_anomalies (
+    audit_run_id   UUID PRIMARY KEY REFERENCES audit_runs(id) ON DELETE CASCADE,
+    device_id      TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('scored', 'insufficient_peers', 'not_ingested', 'unavailable')),
+    -- is_anomaly/anomaly_score/peer_count are only set when status = 'scored'.
+    is_anomaly     BOOLEAN,
+    anomaly_score  DOUBLE PRECISION,
+    peer_count     INTEGER,
+    checked_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Deterministic remediation proposals. A proposal is regenerated in place so
 -- stale approvals cannot survive a template or preflight change.
 CREATE TABLE IF NOT EXISTS remediation_proposals (
@@ -90,6 +118,14 @@ CREATE TABLE IF NOT EXISTS remediation_proposals (
     control_id         TEXT NOT NULL,
     template_name      TEXT NOT NULL,
     script             TEXT NOT NULL,
+    -- Mandatory inverse script for an agentic-RAG proposal (NULL for a
+    -- template proposal — the template itself is trusted, version-controlled
+    -- CLI, not a synthesized change to revert). See app/rag_remediation.py.
+    rollback_script    TEXT,
+    -- 'template': rendered from a version-controlled .j2 file (the
+    -- safety-model-preserving default). 'agentic_rag': SLM-synthesized,
+    -- used only when no template exists for this control's vendor.
+    source             TEXT NOT NULL DEFAULT 'template' CHECK (source IN ('template', 'agentic_rag')),
     preflight_status   TEXT NOT NULL CHECK (preflight_status IN ('SAFE', 'RISK_FLAGS', 'UNAVAILABLE')),
     risk_flags         JSONB NOT NULL DEFAULT '[]'::jsonb,
     approval_status    TEXT NOT NULL DEFAULT 'PENDING' CHECK (approval_status IN ('PENDING', 'APPROVED', 'REJECTED')),

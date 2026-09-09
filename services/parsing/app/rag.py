@@ -30,6 +30,12 @@ class LearningRAGContextProvider:
     Learning/RAG lane's `/learning/search` endpoint and formats trusted
     matches as few-shot context for the SLM prompt.
 
+    The query is now pre-filtered by vendor/OS server-side (main.py's
+    `search_learning`) before similarity search runs at all — retrieving a
+    Juniper mapping for a Cisco chunk was a real, live bug this fixes:
+    never do open-ended vector search across every vendor's confirmed
+    mappings at once.
+
     This is Corrective RAG (CRAG): embedding distance alone grades each
     match into one of three bands, and only the middle band gets a second,
     independent check before being trusted —
@@ -75,7 +81,8 @@ class LearningRAGContextProvider:
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(
-                    f"{self.base_url}/learning/search", json={"query": config_text}
+                    f"{self.base_url}/learning/search",
+                    json={"query": config_text, "vendor": vendor, "os": os_name},
                 )
                 response.raise_for_status()
                 body = response.json()

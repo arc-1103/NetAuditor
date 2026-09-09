@@ -19,13 +19,15 @@ async def save_proposal(proposal: dict) -> None:
         await session.execute(
             text("""
                 INSERT INTO remediation_proposals
-                    (audit_run_id, control_id, template_name, script,
+                    (audit_run_id, control_id, template_name, script, rollback_script, source,
                      preflight_status, risk_flags, approval_status, updated_at)
-                VALUES (:audit_run_id, :control_id, :template_name, :script,
+                VALUES (:audit_run_id, :control_id, :template_name, :script, :rollback_script, :source,
                         :preflight_status, :risk_flags, 'PENDING', :updated_at)
                 ON CONFLICT (audit_run_id, control_id) DO UPDATE SET
                     template_name = EXCLUDED.template_name,
                     script = EXCLUDED.script,
+                    rollback_script = EXCLUDED.rollback_script,
+                    source = EXCLUDED.source,
                     preflight_status = EXCLUDED.preflight_status,
                     risk_flags = EXCLUDED.risk_flags,
                     approval_status = 'PENDING', approved_by = NULL,
@@ -34,6 +36,8 @@ async def save_proposal(proposal: dict) -> None:
             """),
             {
                 **{k: proposal[k] for k in ("audit_run_id", "control_id", "template_name", "script")},
+                "rollback_script": proposal.get("rollback_script"),
+                "source": proposal.get("source", "template"),
                 "preflight_status": preflight["status"],
                 "risk_flags": json.dumps(preflight.get("risk_flags", [])),
                 "updated_at": datetime.now(timezone.utc),
@@ -52,7 +56,7 @@ async def approve(control_id: str, audit_run_id: str, approved: bool, user_id: s
                     approval_comment=:comment, approved_at=:now, updated_at=:now
                 WHERE audit_run_id=:run_id AND control_id=:control_id
                   AND (:approved = false OR preflight_status = 'SAFE')
-                RETURNING audit_run_id, control_id, template_name, script,
+                RETURNING audit_run_id, control_id, template_name, script, rollback_script, source,
                           preflight_status, risk_flags, approval_status,
                           approved_by, approval_comment, approved_at
             """),
@@ -66,7 +70,7 @@ async def get_proposals(audit_run_id: str) -> list[dict]:
     async with async_session() as session:
         rows = (await session.execute(
             text("""
-                SELECT audit_run_id, control_id, template_name, script,
+                SELECT audit_run_id, control_id, template_name, script, rollback_script, source,
                        preflight_status, risk_flags, approval_status,
                        approved_by, approval_comment, approved_at, updated_at
                 FROM remediation_proposals WHERE audit_run_id=:run_id

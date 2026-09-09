@@ -23,19 +23,22 @@ async def get_report_data(audit_run_id: str) -> dict | None:
             return None
         findings = (await session.execute(text("""
             SELECT control_id, framework, title, status, severity, evidence,
-                   remediation, risk_score, created_at
+                   remediation, risk_score, blast_radius, created_at
             FROM compliance_findings WHERE audit_run_id=:run_id
             ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
                      WHEN 'MEDIUM' THEN 3 ELSE 4 END, control_id
         """), {"run_id": audit_run_id})).mappings().all()
         remediations = (await session.execute(text("""
-            SELECT control_id, script, preflight_status, risk_flags,
+            SELECT control_id, script, rollback_script, source, preflight_status, risk_flags,
                    approval_status, approval_comment, approved_at
             FROM remediation_proposals WHERE audit_run_id=:run_id
             ORDER BY control_id
         """), {"run_id": audit_run_id})).mappings().all()
     result = {**_jsonable(run), "findings": [_jsonable(r) for r in findings],
               "remediations": [_jsonable(r) for r in remediations]}
+    for item in result["findings"]:
+        if isinstance(item.get("blast_radius"), str):
+            item["blast_radius"] = json.loads(item["blast_radius"])
     for item in result["remediations"]:
         if isinstance(item.get("risk_flags"), str):
             item["risk_flags"] = json.loads(item["risk_flags"])

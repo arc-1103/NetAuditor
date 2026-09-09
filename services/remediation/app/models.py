@@ -9,7 +9,15 @@ class Finding(BaseModel):
     title: str
     severity: str
     evidence: str = ""
-    remediation: str
+    # Required but nullable, not defaulted: contracts/compliance_finding.schema.json's
+    # `remediation` is always present on a real finding — a string, or
+    # explicitly null when the vendor has no committed .j2 template (the
+    # agentic RAG fallback in app/rag_remediation.py handles that case). A
+    # request that omits this key outright is a malformed/buggy caller, not
+    # "no template" — it must be rejected with a 422, not silently defaulted
+    # to None and routed into the agentic RAG fallback the caller never
+    # asked for.
+    remediation: str | None
 
 
 class GenerateRequest(BaseModel):
@@ -38,4 +46,14 @@ class RemediationProposal(BaseModel):
     script: str
     preflight: PreflightResult
     approval_status: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"
+    # Set only when source == "agentic_rag" — the mandatory inverse script an
+    # operator runs if the remediation drops network connectivity. Template
+    # proposals have no rollback script; the template itself is trusted,
+    # version-controlled CLI, not a synthesized change to revert.
+    rollback_script: str | None = None
+    # "template": rendered from a version-controlled .j2 file (the default,
+    # safety-model-preserving path). "agentic_rag": SLM-synthesized via
+    # app/rag_remediation.py, used only when no template exists for this
+    # control's vendor.
+    source: Literal["template", "agentic_rag"] = "template"
 

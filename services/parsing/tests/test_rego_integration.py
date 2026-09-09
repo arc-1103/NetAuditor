@@ -31,6 +31,9 @@ class InsecureCiscoSLM:
             }
         )
 
+    async def reverse_translate(self, baseline_json, device_context):
+        return "hostname EDGE-RTR\nservice password-encryption\ntransport input telnet"
+
 
 class EmptyRAG:
     async def retrieve(self, vendor, os_name, config_text):

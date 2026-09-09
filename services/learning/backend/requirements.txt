@@ -9,3 +9,6 @@ redis
 pydantic
 pydantic-settings
 pytest
+# Unsupervised semantic anomaly detection (app/main.py's baseline-vectors
+# endpoints) — IsolationForest over a vendor+OS peer cohort's embeddings.
+scikit-learn

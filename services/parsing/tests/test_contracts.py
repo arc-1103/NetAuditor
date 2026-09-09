@@ -82,6 +82,9 @@ async def test_real_worker_pipeline_output_matches_actual_cross_lane_contract(mo
                 }
             )
 
+        async def reverse_translate(self, baseline_json, device_context):
+            return "ip ssh version 2\nno transport input telnet"
+
     class FakeRAG:
         async def retrieve(self, vendor, os_name, config_text):
             return ""

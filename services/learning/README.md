@@ -45,3 +45,20 @@ Example:
   "field": "crypto.ike.hash_algorithm",
   "value": "SHA256"
 }
+```
+
+### Baseline Vectors (unsupervised anomaly detection)
+
+`POST /learning/baseline-vectors` — embeds and stores one evaluated
+baseline, keyed by `config_sha256` and tagged `[vendor, os]`. Called by
+`services/compliance/app/anomaly_client.py` for every evaluated device.
+
+`POST /learning/baseline-vectors/anomaly-check` — fits an `IsolationForest`
+on the device's vendor+OS peer cohort (excluding itself) and scores it as a
+held-out point. Returns `{"status": "insufficient_peers", "peer_count": N}`
+below `ANOMALY_MIN_PEER_COUNT` (default 5) peers, otherwise
+`{"status": "scored", "is_anomaly": bool, "anomaly_score": float,
+"peer_count": N}`. This is a statistical signal Compliance surfaces
+separately from its deterministic verdict — see
+`services/compliance/README.md`'s Unsupervised Semantic Anomaly Detection
+section.

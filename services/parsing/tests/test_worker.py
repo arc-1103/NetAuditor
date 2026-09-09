@@ -1,10 +1,12 @@
 import hashlib
+from dataclasses import replace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app import worker
 from app.models import DeviceContext, SLMResult
+from app.slm_client import SLMError
 from app.vendor_fingerprint import EmptyVendorFingerprintProvider, VendorGuess
 
 
@@ -33,6 +35,33 @@ class FakeSLM:
             },
             mean_logprob=self.mean_logprob,
         )
+
+    async def reverse_translate(self, baseline_json, device_context):
+        # These fixtures never populate a field outside device.* (which the
+        # fidelity diff excludes anyway), so any non-empty string here
+        # yields a trivial 1.0 fidelity on round trip — existing tests stay
+        # unaffected by the reverse-translation gate.
+        return "hostname EDGE-RTR"
+
+
+class SequencedSLM:
+    """Returns a different generate() response on each call, in order — for
+    simulating a forward candidate that diverges from its own round-trip
+    re-extraction (reverse-translation fidelity tests)."""
+
+    def __init__(self, responses, reconstructed_cli="some cli", mean_logprob=None):
+        self._responses = list(responses)
+        self.reconstructed_cli = reconstructed_cli
+        self.mean_logprob = mean_logprob
+        self.prompts = []
+
+    async def generate(self, prompt, config_text, schema, *, device_context):
+        self.prompts.append(prompt)
+        value = self._responses.pop(0)
+        return SLMResult(value=value, mean_logprob=self.mean_logprob)
+
+    async def reverse_translate(self, baseline_json, device_context):
+        return self.reconstructed_cli
 
 
 class FakeRAG:
@@ -69,8 +98,11 @@ async def test_vendor_context_is_detected_once_and_passed_to_all_chunks(monkeypa
     assert result["status"] == "submitted"
     assert result["baseline"]["device"]["detected_vendor"] == "cisco"
     assert result["baseline"]["device"]["parsing_confidence"] > 0
-    assert len(fake_slm.prompts) == 3
-    assert [vendor for _, vendor, _, _ in fake_slm.prompts] == ["cisco", "cisco", "cisco"]
+    # 2 generate() calls per chunk: the forward extraction, and the
+    # reverse-translation round-trip re-extraction (app/worker.py's
+    # _check_reverse_translation_fidelity).
+    assert len(fake_slm.prompts) == 6
+    assert [vendor for _, vendor, _, _ in fake_slm.prompts] == ["cisco"] * 6
     assert all("Detected vendor: cisco" in prompt for prompt, *_ in fake_slm.prompts)
     assert sent[0][0][0] == "compliance.evaluate_baseline"
     payload = sent[0][1]["args"][0]
@@ -226,6 +258,106 @@ async def test_missing_mean_logprob_does_not_trigger_the_uncertainty_gate(monkey
 
 def test_task_name():
     assert worker.process_config.name == "parsing.process_config"
+
+
+@pytest.mark.asyncio
+async def test_low_reverse_translation_fidelity_forces_human_review(monkeypatch):
+    """Multi-agent reverse translation: Agent A's candidate is diffed
+    against a fresh forward extraction of Agent B's CLI reconstruction. A
+    forward candidate whose fields vanish on round trip is evidence of
+    hallucinated/dropped data, independent of the logprob and confidence
+    gates, and must reach human review the same way."""
+    job = make_job()
+    job["chunks"] = [job["chunks"][0]]
+    job["chunk_count"] = 1
+    fake_slm = SequencedSLM(
+        responses=[
+            {
+                "schema_version": "1.0.0",
+                "device": {"parsing_confidence": 0.9},
+                "ssh": {"enabled": True, "version": "2"},
+                "telnet": {"enabled": "DISABLED"},
+            },
+            # Round trip on Agent B's reconstruction recovers nothing.
+            {"schema_version": "1.0.0", "device": {"parsing_confidence": 0.9}},
+        ]
+    )
+    sent = []
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *a, **k: sent.append((a, k)))
+    mark_needs_review = AsyncMock()
+    monkeypatch.setattr(worker.db, "mark_needs_review", mark_needs_review)
+
+    result = await worker._process_config(
+        job, slm_client=fake_slm, rag_provider=FakeRAG(), vendor_fingerprint_provider=EmptyVendorFingerprintProvider()
+    )
+
+    assert result["status"] == "human_review"
+    assert "reverse_translation_fidelity_below_threshold" in result["unknown_blocks"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_high_reverse_translation_fidelity_does_not_block_parsing(monkeypatch):
+    job = make_job()
+    job["chunks"] = [job["chunks"][0]]
+    job["chunk_count"] = 1
+    same_value = {
+        "schema_version": "1.0.0",
+        "device": {"parsing_confidence": 0.9},
+        "ssh": {"enabled": True, "version": "2"},
+    }
+    fake_slm = SequencedSLM(responses=[dict(same_value), dict(same_value)])
+    sent = []
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *a, **k: sent.append((a, k)))
+
+    result = await worker._process_config(
+        job, slm_client=fake_slm, rag_provider=FakeRAG(), vendor_fingerprint_provider=EmptyVendorFingerprintProvider()
+    )
+
+    assert result["status"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_reverse_translation_failure_degrades_gracefully(monkeypatch):
+    """An Ollama hiccup on Agent B is not evidence Agent A's own extraction
+    was wrong — it must not block an otherwise good chunk."""
+
+    class FailingReverseSLM(FakeSLM):
+        async def reverse_translate(self, baseline_json, device_context):
+            raise SLMError("ollama unavailable for reverse translation")
+
+    sent = []
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *a, **k: sent.append((a, k)))
+
+    result = await worker._process_config(
+        make_job(),
+        slm_client=FailingReverseSLM(confidence=0.9),
+        rag_provider=FakeRAG(),
+        vendor_fingerprint_provider=EmptyVendorFingerprintProvider(),
+    )
+
+    assert result["status"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_disabling_reverse_translation_skips_the_check_entirely(monkeypatch):
+    monkeypatch.setattr(worker, "settings", replace(worker.settings, enable_reverse_translation=False))
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *a, **k: None)
+    calls = []
+
+    class SpySLM(FakeSLM):
+        async def reverse_translate(self, baseline_json, device_context):
+            calls.append(1)
+            return "should not be called"
+
+    result = await worker._process_config(
+        make_job(),
+        slm_client=SpySLM(confidence=0.9),
+        rag_provider=FakeRAG(),
+        vendor_fingerprint_provider=EmptyVendorFingerprintProvider(),
+    )
+
+    assert result["status"] == "submitted"
+    assert calls == []
 
 
 @pytest.mark.asyncio

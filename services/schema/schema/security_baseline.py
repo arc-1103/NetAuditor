@@ -126,6 +126,36 @@ class BannerConfig(StrictModel):
     banner_text_snippet: str | None = Field(default=None, max_length=200)
 
 
+class Interface(StrictModel):
+    name: str
+    ip_address: str | None = None
+    subnet_mask: str | None = None
+    description: str | None = None
+    enabled: bool = True
+
+
+class RoutingNeighbor(StrictModel):
+    """One adjacency observed in the config: a static next-hop, an IGP
+    neighbor, or a BGP peer. `protocol` is free text (e.g. 'static', 'ospf',
+    'bgp', 'eigrp') rather than an enum — GraphRAG topology mapping only
+    needs an edge label, not a closed vendor-specific protocol taxonomy."""
+
+    protocol: str
+    neighbor_ip: str | None = None
+    remote_asn: int | None = None
+    local_asn: int | None = None
+
+
+class TopologyConfig(StrictModel):
+    """Interface/adjacency facts feeding the GraphRAG topology graph (see
+    services/compliance/app/graph_client.py). Not read by OPA policy — this
+    section has no bearing on the compliance verdict, only on blast-radius
+    tracing once a finding exists."""
+
+    interfaces: list[Interface] = Field(default_factory=list)
+    routing_neighbors: list[RoutingNeighbor] = Field(default_factory=list)
+
+
 class ServiceConfig(StrictModel):
     http_server_enabled: ProtocolStatus = ProtocolStatus.UNKNOWN
     https_server_enabled: ProtocolStatus = ProtocolStatus.UNKNOWN
@@ -152,6 +182,7 @@ class SecurityBaseline(StrictModel):
     crypto: CryptoConfig = Field(default_factory=CryptoConfig)
     banners: BannerConfig = Field(default_factory=BannerConfig)
     services: ServiceConfig = Field(default_factory=ServiceConfig)
+    topology: TopologyConfig = Field(default_factory=TopologyConfig)
 
     @field_validator("schema_version")
     @classmethod

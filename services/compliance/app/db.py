@@ -26,7 +26,10 @@ STATUS_EVALUATED = "EVALUATED"
 engine = create_async_engine(POSTGRES_DSN, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-_FINDING_COLUMNS = ("control_id", "framework", "title", "status", "severity", "evidence", "remediation", "risk_score")
+_FINDING_COLUMNS = (
+    "control_id", "framework", "title", "status", "severity", "evidence", "remediation", "risk_score",
+    "blast_radius",
+)
 
 
 async def save_findings(audit_run_id: str, findings: list[dict]) -> None:
@@ -48,14 +51,18 @@ async def save_findings(audit_run_id: str, findings: list[dict]) -> None:
                         """
                         INSERT INTO compliance_findings
                             (audit_run_id, control_id, framework, title, status,
-                             severity, evidence, remediation, risk_score)
+                             severity, evidence, remediation, risk_score, blast_radius)
                         VALUES
                             (:audit_run_id, :control_id, :framework, :title, :status,
-                             :severity, :evidence, :remediation, :risk_score)
+                             :severity, :evidence, :remediation, :risk_score, :blast_radius)
                         """
                     ),
                     [
-                        {"audit_run_id": audit_run_id, **{c: f.get(c) for c in _FINDING_COLUMNS}}
+                        {
+                            "audit_run_id": audit_run_id,
+                            **{c: f.get(c) for c in _FINDING_COLUMNS if c != "blast_radius"},
+                            "blast_radius": json.dumps(f.get("blast_radius") or []),
+                        }
                         for f in findings
                     ],
                 )
@@ -69,6 +76,45 @@ async def save_findings(audit_run_id: str, findings: list[dict]) -> None:
                     "run_id": audit_run_id,
                 },
             )
+
+
+async def save_anomaly(audit_run_id: str, device_id: str, anomaly: dict) -> None:
+    """Upsert this run's unsupervised anomaly-detection result.
+
+    A separate table from compliance_findings, not a column on it: this is
+    a statistical signal that can change over time as more peer devices are
+    scanned, with nothing about the baseline itself changing — see
+    app/anomaly_client.py. Keeping it structurally apart from findings
+    makes "never affects risk_score/compliance_score" a schema guarantee,
+    not just a convention.
+    """
+    async with async_session() as session, session.begin():
+        await session.execute(
+            text(
+                """
+                INSERT INTO configuration_anomalies
+                    (audit_run_id, device_id, status, is_anomaly, anomaly_score, peer_count, checked_at)
+                VALUES
+                    (:audit_run_id, :device_id, :status, :is_anomaly, :anomaly_score, :peer_count, :checked_at)
+                ON CONFLICT (audit_run_id) DO UPDATE SET
+                    device_id = EXCLUDED.device_id,
+                    status = EXCLUDED.status,
+                    is_anomaly = EXCLUDED.is_anomaly,
+                    anomaly_score = EXCLUDED.anomaly_score,
+                    peer_count = EXCLUDED.peer_count,
+                    checked_at = EXCLUDED.checked_at
+                """
+            ),
+            {
+                "audit_run_id": audit_run_id,
+                "device_id": device_id,
+                "status": anomaly.get("status", "unavailable"),
+                "is_anomaly": anomaly.get("is_anomaly"),
+                "anomaly_score": anomaly.get("anomaly_score"),
+                "peer_count": anomaly.get("peer_count"),
+                "checked_at": datetime.now(timezone.utc),
+            },
+        )
 
 
 async def get_audit_run(audit_run_id: str) -> dict | None:
@@ -99,7 +145,7 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
                 text(
                     """
                     SELECT control_id, framework, title, status, severity,
-                           evidence, remediation, risk_score, created_at
+                           evidence, remediation, risk_score, blast_radius, created_at
                     FROM compliance_findings
                     WHERE audit_run_id = :run_id
                     ORDER BY control_id
@@ -109,7 +155,24 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
             )
         ).mappings().all()
 
-    return {**_jsonable(run_row), "findings": [_jsonable(r) for r in finding_rows]}
+        anomaly_row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT device_id, status, is_anomaly, anomaly_score, peer_count, checked_at
+                    FROM configuration_anomalies
+                    WHERE audit_run_id = :run_id
+                    """
+                ),
+                {"run_id": audit_run_id},
+            )
+        ).mappings().first()
+
+    return {
+        **_jsonable(run_row),
+        "findings": [_jsonable(r) for r in finding_rows],
+        "anomaly": _jsonable(anomaly_row) if anomaly_row is not None else None,
+    }
 
 
 def _jsonable(row) -> dict:
@@ -119,4 +182,6 @@ def _jsonable(row) -> dict:
     value = json.loads(json.dumps(dict(row), default=str))
     if isinstance(value.get("status_detail"), str):
         value["status_detail"] = json.loads(value["status_detail"])
+    if isinstance(value.get("blast_radius"), str):
+        value["blast_radius"] = json.loads(value["blast_radius"])
     return value

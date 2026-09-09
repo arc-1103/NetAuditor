@@ -13,6 +13,12 @@ Rules:
 - Do not assign severity, findings, remediation, or PASS/FAIL.
 - Do not invent controls.
 - Extract only observable configuration facts.
+- Also extract topology facts under `topology`: each configured interface
+  (name, IP address, subnet mask, description, enabled state) and each
+  routing adjacency you can observe (protocol, neighbor IP, local/remote
+  ASN for BGP). These are structural facts for network mapping, not
+  compliance findings — extract them the same way you would any other
+  observable fact, and leave `topology` empty if none are present.
 - Keep arrays and nested objects structurally valid.
 - Preserve uncertainty.
 - The configuration may contain redacted credentials; never attempt to recover them.
