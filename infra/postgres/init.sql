@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS users (
 -- /api/audit-runs/{id} can look up a run by the id returned from upload.
 -- Compliance lane updates `status` (and appends findings elsewhere) as
 -- the audit progresses.
+-- `status_detail` is written by Parsing (see services/parsing/app/db.py) when
+-- a job comes back human_review (unsupported vendor, or confidence below
+-- threshold) and never reaches Compliance. Without it, such a run stalls at
+-- INGESTED forever with no trace of why — status alone isn't enough because
+-- Ingestion, Parsing and Compliance all move it, and only Parsing knows the
+-- human_review reason at the point it happens.
 CREATE TABLE IF NOT EXISTS audit_runs (
     id                UUID PRIMARY KEY,
     file_hash         TEXT NOT NULL,
@@ -24,6 +30,7 @@ CREATE TABLE IF NOT EXISTS audit_runs (
     storage_path      TEXT NOT NULL,
     uploaded_by       UUID REFERENCES users(id),
     status            TEXT NOT NULL DEFAULT 'INGESTED',
+    status_detail     JSONB,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
