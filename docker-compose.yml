@@ -1,5 +1,3 @@
-# Skeleton — infra lane fills in build contexts / images.
-# Each service loads ITS OWN env_file so lanes stay decoupled.
 version: "3.9"
 
 networks:
@@ -20,15 +18,6 @@ services:
     image: redis:7
     networks: [audit-net]
 
-  # Raw config object store. MINIO_ROOT_USER/PASSWORD come from root .env and
-  # are what services/*/.env use as MINIO_ACCESS_KEY/MINIO_SECRET_KEY.
-  # The `raw-configs` bucket is created on first use by the ingestion service
-  # (services/ingestion/app/uploader.py::get_minio_client), so there's no
-  # bootstrap job here.
-  # NOTE: audit-net is internal, so the :9001 console is not reachable from the
-  # host. To look at it during development:
-  #   docker compose exec minio mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-  #   docker compose exec minio mc ls local/raw-configs
   minio:
     image: minio/minio
     env_file: .env
@@ -47,10 +36,6 @@ services:
     image: chromadb/chroma
     networks: [audit-net]
 
-  # Policy engine for the Compliance lane. Pinned: the Rego in
-  # services/compliance/policies/ is v1 syntax and was verified against this
-  # version — `opa test policies/` is the gate. The bundle is mounted, not
-  # baked into an image, so editing a .rego file needs only a container restart.
   opa:
     image: openpolicyagent/opa:1.20.2
     command:
@@ -81,20 +66,19 @@ services:
     networks: [audit-net]
 
   parsing:
-    build: ./services/parsing
+    build:
+      context: .
+      dockerfile: services/parsing/Dockerfile
     env_file: ./services/parsing/.env
-    depends_on: [ollama, chromadb]
+    depends_on: [redis, ollama, chromadb]
     networks: [audit-net]
 
-  # Read side: serves GET /audit-runs/{id} to the Gateway, plus POST /evaluate.
   compliance:
     build: ./services/compliance
     env_file: ./services/compliance/.env
     depends_on: [opa, postgres, redis]
     networks: [audit-net]
 
-  # Write side: consumes the `compliance.evaluate_baseline` task the Parsing
-  # lane publishes. Same image, different command — see services/compliance/app/worker.py.
   compliance-worker:
     build: ./services/compliance
     env_file: ./services/compliance/.env
