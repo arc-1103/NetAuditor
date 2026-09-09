@@ -1,0 +1,8 @@
+! CIS-FORTIOS-1.6.1 - Configure an authorized-use warning
+config system global
+    set pre-login-banner enable
+    set post-login-banner enable
+end
+config system replacemsg admin pre_admin-disclaimer-text
+    set buffer "{{ login_banner | default('Authorized access only. Activity may be monitored and reported.') }}"
+end

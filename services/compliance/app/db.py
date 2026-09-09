@@ -83,7 +83,7 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
                 text(
                     """
                     SELECT id, file_hash, original_filename, storage_path,
-                           uploaded_by, status, created_at, updated_at
+                           uploaded_by, status, status_detail, created_at, updated_at
                     FROM audit_runs WHERE id = :run_id
                     """
                 ),
@@ -113,5 +113,10 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
 
 
 def _jsonable(row) -> dict:
-    """UUID/datetime columns come back as objects; FastAPI needs them as strings."""
-    return json.loads(json.dumps(dict(row), default=str))
+    """UUID/datetime columns come back as objects; FastAPI needs them as
+    strings, and status_detail needs to come back as an object, not the
+    JSON-encoded string it's stored/bound as."""
+    value = json.loads(json.dumps(dict(row), default=str))
+    if isinstance(value.get("status_detail"), str):
+        value["status_detail"] = json.loads(value["status_detail"])
+    return value

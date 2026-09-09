@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: netaudit-schema
+Version: 1.0.0
+Summary: Shared SecurityBaseline models for NetAuditor
+Requires-Python: <3.12,>=3.11
+Requires-Dist: pydantic==2.9.2

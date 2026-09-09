@@ -1,0 +1,8 @@
+! CIS-FORTIOS-1.4.1 - Enable NTP authentication
+! REVIEW: replace the key placeholder before deployment
+config system ntp
+    set ntpsync enable
+    set authentication enable
+    set key-type SHA1
+    set key <REPLACE_NTP_KEY>
+end

@@ -70,7 +70,7 @@ services:
       context: .
       dockerfile: services/parsing/Dockerfile
     env_file: ./services/parsing/.env
-    depends_on: [redis, ollama, chromadb]
+    depends_on: [redis, ollama, chromadb, postgres]
     networks: [audit-net]
 
   compliance:
@@ -90,6 +90,13 @@ services:
     build: ./services/learning/backend
     env_file: ./services/learning/.env
     depends_on: [chromadb, postgres]
+    networks: [audit-net]
+
+  learning-worker:
+    build: ./services/learning/backend
+    env_file: ./services/learning/.env
+    command: python -m app.unknown_handler
+    depends_on: [redis, postgres]
     networks: [audit-net]
 
   remediation:

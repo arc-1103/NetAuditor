@@ -35,7 +35,11 @@ def merge_baselines(
         merged["device"]["detected_hardware_model"] = device_context.hardware_model
         if device_context.raw_hostname is not None:
             merged["device"]["raw_hostname"] = device_context.raw_hostname
-        confidence = min(confidence, device_context.confidence)
+        # device_context.confidence is the regex fingerprinter's confidence in
+        # the vendor *name* — it must not floor extraction confidence, or an
+        # unrecognized vendor the SLM parsed well gets punished for a
+        # fingerprint miss (see worker.py's _process_config for the same
+        # reasoning on the per-job confidence calculation).
 
     merged["device"]["parsing_confidence"] = min(1.0, max(0.0, confidence))
     merged["device"]["unknown_blocks_count"] = sum(

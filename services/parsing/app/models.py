@@ -42,3 +42,17 @@ class ParseResult:
     baseline: Any
     unknown_blocks: list[UnknownBlock]
     chunk_confidences: list[float]
+
+
+@dataclass(frozen=True)
+class SLMResult:
+    """Return shape of `SLMClient.generate`.
+
+    `mean_logprob` is the mean per-token log-probability the model reported
+    for the generated JSON, or `None` when the backend didn't supply
+    logprobs (e.g. an Ollama version without per-token logprob output).
+    `None` means "no signal" — it must not be treated as low confidence.
+    """
+
+    value: dict[str, Any]
+    mean_logprob: float | None = None

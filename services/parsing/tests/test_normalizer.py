@@ -14,6 +14,12 @@ from app.normalizer import (
 def test_vendor_aliases():
     assert normalize_vendor("Cisco IOS-XE") == "cisco"
     assert normalize_vendor("PAN-OS") == "paloalto"
+    assert normalize_vendor("FortiOS") == "fortinet"
+
+
+def test_unlisted_vendor_passes_through_instead_of_raising():
+    assert normalize_vendor("SonicWall") == "sonicwall"
+    assert normalize_vendor("Check  Point") == "check point"
 
 
 def test_algorithms():

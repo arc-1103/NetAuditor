@@ -1,0 +1,4 @@
+! CIS-FORTIOS-1.2.2 - Remove the insecure default SNMP community
+config system snmp community
+    delete {{ snmp_community_id | default(1) }}
+end

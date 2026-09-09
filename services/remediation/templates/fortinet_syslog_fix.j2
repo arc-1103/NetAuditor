@@ -1,0 +1,6 @@
+! CIS-FORTIOS-1.8.1 - Enable remote system logging
+! REVIEW: confirm the collector address before deployment
+config log syslogd setting
+    set status enable
+    set server "{{ syslog_host | default('10.0.0.10') }}"
+end

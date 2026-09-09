@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app import worker
-from app.models import DeviceContext
+from app.models import DeviceContext, SLMResult
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 POLICIES = REPO_ROOT / "services" / "compliance" / "policies"
@@ -15,19 +15,21 @@ POLICIES = REPO_ROOT / "services" / "compliance" / "policies"
 
 class InsecureCiscoSLM:
     async def generate(self, prompt, config_text, schema, *, device_context):
-        return {
-            "schema_version": "1.0.0",
-            "device": {"parsing_confidence": 0.91},
-            "aaa": {"password_encryption": "DISABLED"},
-            "ssh": {"enabled": True, "version": "1-2", "management_acl": None},
-            "telnet": {"enabled": "ENABLED"},
-            "snmp": {"enabled": True, "version": "v2c", "community_strings": ["public"]},
-            "logging": {"syslog_enabled": False, "syslog_hosts": []},
-            "ntp": {"enabled": True, "authentication_enabled": False},
-            "crypto": {"ike_policies": [{"policy_id": 10, "encryption": "3DES"}]},
-            "banners": {"login_banner_present": False},
-            "services": {"http_server_enabled": "ENABLED"},
-        }
+        return SLMResult(
+            value={
+                "schema_version": "1.0.0",
+                "device": {"parsing_confidence": 0.91},
+                "aaa": {"password_encryption": "DISABLED"},
+                "ssh": {"enabled": True, "version": "1-2", "management_acl": None},
+                "telnet": {"enabled": "ENABLED"},
+                "snmp": {"enabled": True, "version": "v2c", "community_strings": ["public"]},
+                "logging": {"syslog_enabled": False, "syslog_hosts": []},
+                "ntp": {"enabled": True, "authentication_enabled": False},
+                "crypto": {"ike_policies": [{"policy_id": 10, "encryption": "3DES"}]},
+                "banners": {"login_banner_present": False},
+                "services": {"http_server_enabled": "ENABLED"},
+            }
+        )
 
 
 class EmptyRAG:
@@ -40,7 +42,7 @@ async def test_parsing_output_is_accepted_by_actual_cisco_rego(tmp_path, monkeyp
     opa = shutil.which("opa")
     if opa is None:
         pytest.skip("opa binary not available; run this test in the NetAuditor toolchain")
-    policy_file = POLICIES / "cis" / "cisco_ios_level1.rego"
+    policy_file = POLICIES / "generic" / "generic_level1.rego"
     if not policy_file.exists():
         pytest.skip(f"actual Rego policy not present at {policy_file}")
 
@@ -74,5 +76,5 @@ async def test_parsing_output_is_accepted_by_actual_cisco_rego(tmp_path, monkeyp
     body = json.loads(proc.stdout)
     result_obj = body["result"][0]["expressions"][0]["value"]
     serialized = json.dumps(result_obj)
-    assert "CIS-IOS-1.1.1" in serialized
-    assert "CIS-IOS-1.1.2" in serialized
+    assert "CIS-NET-1.1.1" in serialized
+    assert "CIS-NET-1.1.2" in serialized
