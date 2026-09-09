@@ -19,6 +19,13 @@ class Settings:
     use_mock_slm: bool = _bool("USE_MOCK_SLM", True)
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
     ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+    postgres_dsn: str = os.getenv(
+        "POSTGRES_DSN", "postgresql+asyncpg://netaudit:changeme_in_local_env@postgres:5432/netaudit"
+    )
+    learning_url: str = os.getenv("LEARNING_URL", "http://learning:8003")
+    rag_correct_max_distance: float = float(os.getenv("RAG_CORRECT_MAX_DISTANCE", "0.4"))
+    rag_ambiguous_max_distance: float = float(os.getenv("RAG_AMBIGUOUS_MAX_DISTANCE", "0.8"))
+    logprob_uncertainty_threshold: float = float(os.getenv("LOGPROB_UNCERTAINTY_THRESHOLD", "-0.5"))
 
 
 settings = Settings()

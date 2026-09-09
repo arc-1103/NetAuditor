@@ -1,0 +1,14 @@
+! CIS-FORTIOS-1.2.1 - Configure authenticated and encrypted SNMPv3
+! Secrets are intentionally placeholders and must be replaced before deployment
+config system snmp sysinfo
+    set status enable
+end
+config system snmp user
+    edit "{{ snmp_user | default('netaudit-monitor') }}"
+        set security-level auth-priv
+        set auth-proto sha256
+        set auth-pwd <REPLACE_AUTH_SECRET>
+        set priv-proto aes256
+        set priv-pwd <REPLACE_PRIV_SECRET>
+    next
+end

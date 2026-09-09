@@ -1,0 +1,7 @@
+! CIS-FORTIOS-1.7.1 - Disable unencrypted HTTP administrative access
+! REVIEW: confirm {{ interface | default('mgmt') }} is the correct interface before deployment
+config system interface
+    edit "{{ interface | default('mgmt') }}"
+        set allowaccess https ssh ping
+    next
+end

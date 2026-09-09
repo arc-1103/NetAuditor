@@ -42,6 +42,7 @@ async def sqlite_session(monkeypatch):
                     storage_path      TEXT NOT NULL,
                     uploaded_by       TEXT,
                     status            TEXT NOT NULL DEFAULT 'INGESTED',
+                    status_detail     TEXT,
                     created_at        TEXT,
                     updated_at        TEXT
                 )
@@ -161,3 +162,26 @@ async def test_get_audit_run_before_evaluation_has_no_findings(sqlite_session):
 
     assert run["status"] == "INGESTED"
     assert run["findings"] == []
+
+
+async def test_get_audit_run_surfaces_status_detail_from_parsing(sqlite_session):
+    """A run Parsing marked NEEDS_REVIEW (see services/parsing/app/db.py) must
+    not look identical to one still awaiting processing — status_detail is
+    the only place the reason survives."""
+    async with sqlite_session() as session:
+        await session.execute(
+            text(
+                """
+                UPDATE audit_runs SET status = 'NEEDS_REVIEW',
+                    status_detail = '{"reason": "unknown_or_unsupported_vendor", "detected_vendor": "unknown"}'
+                WHERE id = :id
+                """
+            ),
+            {"id": RUN_ID},
+        )
+        await session.commit()
+
+    run = await db.get_audit_run(RUN_ID)
+
+    assert run["status"] == "NEEDS_REVIEW"
+    assert run["status_detail"] == {"reason": "unknown_or_unsupported_vendor", "detected_vendor": "unknown"}

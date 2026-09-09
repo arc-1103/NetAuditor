@@ -11,16 +11,18 @@ from celery import Celery
 
 from schema.security_baseline import SecurityBaseline
 
+from . import db
 from .config import settings
 from .grammar_constraints import GrammarConstraints
 from .merge import merge_baselines
 from .models import DeviceContext, UnknownBlock
 from .normalizer import normalize_candidate
 from .prompts import build_prompt
-from .rag import EmptyRAGContextProvider, RAGContextProvider
+from .rag import LearningRAGContextProvider, RAGContextProvider
 from .schema_validator import BaselineValidator
 from .slm_client import OllamaSLMClient, SLMError
-from .vendor_detector import SUPPORTED_VENDORS, detect_job_context
+from .vendor_detector import detect_job_context
+from .vendor_fingerprint import LearningVendorFingerprintProvider, VendorFingerprintProvider
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,12 @@ _slm = OllamaSLMClient(
 )
 _validator = BaselineValidator()
 _grammar = GrammarConstraints(settings.grammar_engine)
-_rag: RAGContextProvider = EmptyRAGContextProvider()
+_rag: RAGContextProvider = LearningRAGContextProvider(
+    settings.learning_url,
+    correct_max_distance=settings.rag_correct_max_distance,
+    ambiguous_max_distance=settings.rag_ambiguous_max_distance,
+)
+_vendor_fingerprint: VendorFingerprintProvider = LearningVendorFingerprintProvider(settings.learning_url)
 
 
 class IngestionPayloadError(ValueError):
@@ -121,14 +128,15 @@ async def _parse_chunk(
             device_context.os,
             rag_context,
         )
-        candidate = await slm.generate(
+        slm_result = await slm.generate(
             prompt,
             text,
             _grammar.json_schema(),
             device_context=device_context,
         )
-        raw_candidate = candidate
-        candidate = normalize_candidate(candidate)
+        raw_candidate = slm_result.value
+        mean_logprob = slm_result.mean_logprob
+        candidate = normalize_candidate(raw_candidate)
 
         device = candidate["device"]
         model_vendor = device.get("detected_vendor")
@@ -152,6 +160,26 @@ async def _parse_chunk(
         }
 
         baseline = SecurityBaseline.model_validate(candidate)
+
+        # Active learning via token uncertainty: a low mean logprob means the
+        # model itself was unsure about the tokens it generated, independent
+        # of whether the resulting JSON happens to look complete and valid.
+        # Route it the same way a schema-validation failure is routed — to
+        # the Learning lane's unknown-block queue for a human GUI review —
+        # rather than silently publishing a baseline the model wasn't
+        # confident about. `None` means the backend gave no logprob signal at
+        # all, which must not be treated as low confidence.
+        if mean_logprob is not None and mean_logprob < settings.logprob_uncertainty_threshold:
+            return None, UnknownBlock(
+                chunk_index=chunk["index"],
+                text=text,
+                reason=(
+                    f"low_token_confidence: mean_logprob={mean_logprob:.3f} "
+                    f"< threshold={settings.logprob_uncertainty_threshold}"
+                ),
+                candidate=raw_candidate,
+            )
+
         return baseline, None
 
     except (SLMError, ValueError, TypeError) as exc:
@@ -174,7 +202,9 @@ async def _process_config(
     *,
     slm_client: OllamaSLMClient | None = None,
     rag_provider: RAGContextProvider | None = None,
+    vendor_fingerprint_provider: VendorFingerprintProvider | None = None,
 ) -> dict[str, Any]:
+    fingerprint_provider = vendor_fingerprint_provider or _vendor_fingerprint
     validate_ingestion_job(job)
 
     device_context = detect_job_context(job["chunks"])
@@ -196,7 +226,18 @@ async def _process_config(
         if unknown is not None:
             unknown_blocks.append(unknown)
 
+    _dispatch_unknown_blocks(job["job_id"], device_context, unknown_blocks)
+
     if not baselines:
+        detail = {
+            "reason": "no_chunks_parsed",
+            "detected_vendor": device_context.vendor,
+            "detected_os": device_context.os,
+            "confidence": device_context.confidence,
+            "unknown_blocks_count": len(unknown_blocks),
+        }
+        await _add_semantic_vendor_guess(detail, device_context, job["chunks"], fingerprint_provider)
+        await db.mark_needs_review(job["job_id"], detail)
         return {
             "status": "human_review",
             "audit_run_id": job["job_id"],
@@ -209,14 +250,17 @@ async def _process_config(
     merged.device.config_sha256 = job["file_hash"]
     merged.device.unknown_blocks_count += len(unknown_blocks)
 
-    # Device-level confidence: vendor confidence and successful SLM extraction
-    # quality are relevant; lack of a fingerprint inside a chunk is not.
-    slm_confidence = sum(chunk_confidences) / len(chunk_confidences)
-    confidence = min(device_context.confidence, slm_confidence)
+    # Device-level confidence comes from extraction quality alone — never
+    # from whether the regex fingerprinter recognized the vendor's name.
+    # Flooring this against device_context.confidence (0.0 for anything the
+    # fingerprinter doesn't know) would silently re-create a vendor
+    # allowlist through the confidence math even after removing the
+    # explicit one below: an unrecognized vendor the SLM nonetheless parsed
+    # well must not be punished for a fingerprint miss.
+    confidence = sum(chunk_confidences) / len(chunk_confidences)
 
     # Validation/parse failures reduce coverage, but do not collapse confidence
-    # to zero. The published baseline is still gated below by both threshold and
-    # vendor support.
+    # to zero. The published baseline is still gated below by the threshold.
     if job["chunks"] and unknown_blocks:
         failure_ratio = len(unknown_blocks) / len(job["chunks"])
         confidence *= max(0.0, 1.0 - 0.50 * failure_ratio)
@@ -227,18 +271,26 @@ async def _process_config(
     merged.device.parsing_confidence = min(1.0, max(0.0, confidence))
     baseline_json = merged.model_dump(mode="json")
 
-    publishable_vendor = device_context.vendor in SUPPORTED_VENDORS
-    above_threshold = merged.device.parsing_confidence >= settings.confidence_threshold
-
-    if not publishable_vendor or not above_threshold:
+    # Vendor identity is no longer a gate — an unrecognized vendor is not
+    # the same thing as an unparseable one. Whether this device reaches
+    # Compliance depends solely on whether the SLM's own extraction was
+    # good enough to trust, which the OPA bundle then evaluates identically
+    # regardless of what vendor produced it.
+    if merged.device.parsing_confidence < settings.confidence_threshold:
+        detail = {
+            "reason": "parsing_confidence_below_threshold",
+            "detected_vendor": device_context.vendor,
+            "detected_os": device_context.os,
+            "confidence": merged.device.parsing_confidence,
+            "unknown_blocks_count": len(unknown_blocks),
+        }
+        await _add_semantic_vendor_guess(detail, device_context, job["chunks"], fingerprint_provider)
+        await db.mark_needs_review(job["job_id"], detail)
         return {
             "status": "human_review",
             "audit_run_id": job["job_id"],
             "baseline": baseline_json,
-            "reason": (
-                "unknown_or_unsupported_vendor" if not publishable_vendor
-                else "parsing_confidence_below_threshold"
-            ),
+            "reason": "parsing_confidence_below_threshold",
             "unknown_blocks": [_unknown_to_dict(x) for x in unknown_blocks],
             "conflicts": conflicts,
         }
@@ -282,6 +334,54 @@ def _unknown_to_dict(block: UnknownBlock) -> dict[str, Any]:
         "fields": block.fields,
         "candidate": block.candidate,
     }
+
+
+def _job_text_sample(chunks: list[dict[str, Any]], *, max_chars: int = 4000) -> str:
+    ordered = sorted(chunks, key=lambda item: item["index"])
+    return "\n\n".join(str(chunk.get("text", "")) for chunk in ordered)[:max_chars]
+
+
+async def _add_semantic_vendor_guess(
+    detail: dict[str, Any],
+    device_context: DeviceContext,
+    chunks: list[dict[str, Any]],
+    provider: VendorFingerprintProvider,
+) -> None:
+    """Mutate `detail` in place with a semantic vendor guess when regex
+    detection came back unknown. Reporting-only: never changes device_context
+    or any gating decision, only what an admin sees in status_detail.
+    """
+    if device_context.vendor != "unknown":
+        return
+
+    guess = await provider.identify(_job_text_sample(chunks))
+    if guess is not None:
+        detail["semantic_vendor_guess"] = {
+            "vendor": guess.vendor,
+            "os": guess.os,
+            "confidence": guess.confidence,
+        }
+
+
+def _dispatch_unknown_blocks(job_id: str, device_context: DeviceContext, unknown_blocks: list[UnknownBlock]) -> None:
+    """Push each block that failed schema validation to the Learning lane for
+    human mapping. Fires regardless of the job's overall outcome — a chunk
+    that failed validation needs review whether or not the rest of the
+    device's baseline was good enough to publish.
+    """
+    context = _context_to_dict(device_context)
+    for block in unknown_blocks:
+        celery_app.send_task(
+            "learning.receive_unknown_block",
+            args=[
+                {
+                    "block_id": f"{job_id}:{block.chunk_index}",
+                    "audit_run_id": job_id,
+                    "raw_text": block.text,
+                    "chunk_context": context,
+                }
+            ],
+        )
 
 
 if __name__ == "__main__":

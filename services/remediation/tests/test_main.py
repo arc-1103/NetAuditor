@@ -22,7 +22,7 @@ async def request(method, path, **kwargs):
 async def test_health_reports_loaded_templates():
     response = await request("GET", "/health")
     assert response.status_code == 200
-    assert response.json()["templates"] == 11
+    assert response.json()["templates"] == 20
 
 
 @pytest.mark.asyncio

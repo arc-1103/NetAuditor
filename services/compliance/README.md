@@ -11,8 +11,8 @@ here calls an LLM.
 
 | File | Role |
 |---|---|
-| `policies/cis/cisco_ios_level1.rego` | The rules. CIS Cisco IOS L1, illustrative subset per blueprint §7 |
-| `policies/cis/cisco_ios_level1_test.rego` | `opa test` cases — one compliant + one violating baseline per control |
+| `policies/generic/generic_level1.rego` | The rules — vendor-agnostic, evaluated identically for every device. Illustrative subset per blueprint §7 |
+| `policies/generic/generic_level1_test.rego` | `opa test` cases — one compliant + one violating baseline per control, plus the vendor-independence tests |
 | `app/opa_client.py` | Posts the baseline to OPA, walks the result for `deny` sets |
 | `app/risk_scorer.py` | Severity → risk weight, and the per-run summary |
 | `app/evaluator.py` | The one pass: evaluate → score → persist |
@@ -37,7 +37,7 @@ integration day:
   mounted, still runs a Celery worker, and MinIO still has its data volume.
 
 The OPA-backed half needs the `opa` binary on PATH and skips without it, so
-`pytest` is green either way (57 tests with opa, 51 + 6 skipped without).
+`pytest` is green either way (58 tests with opa, 52 + 6 skipped without).
 
 ## Run standalone
 
@@ -97,28 +97,42 @@ should render.
 
 ## Adding a control, or a vendor
 
-A control is one `deny` rule in the relevant `.rego` file plus two cases in
-its `_test.rego`. A whole new vendor is a new file under `policies/<framework>/`
-— **no Python change**: `opa_client.py` evaluates the entire
-`data.compliance.<framework>` subtree in one call and collects every `deny` set
-it finds.
+A control is one `deny` rule in `generic_level1.rego` plus two cases in its
+`_test.rego`. There is deliberately **no per-vendor bundle** — the old
+one-bundle-per-vendor model (a `cisco_ios_level1.rego` here, a
+`fortinet_level1.rego` there) can only ever cover "the vendors someone
+remembered to add," which is exactly what this problem statement rules out.
+Every rule reads the same normalized `SecurityBaseline` schema and applies
+to every device the same way, regardless of `input.device.detected_vendor`.
 
-The cost of that is that every package sees every device, so **every rule must
-guard on `input.device.detected_vendor`** via the package's `applies` rule.
-Without it, a Juniper config gets judged against Cisco rules.
-`cisco_ios_level1_test.rego::test_non_cisco_device_is_ignored` is there to
-catch a forgotten guard.
+Adding **remediation** for a vendor is a data change, not a code change: add
+a row to `remediation_templates` in `generic_level1.rego` mapping
+`{control_id: {vendor: template_filename}}`. A vendor with no row there still
+gets a full compliance verdict — `remediation` just comes back `null`, which
+`contracts/compliance_finding.schema.json` already treats as "no template
+yet," not an error.
 
-The second rule is to read optional fields through `object.get` with an
-explicit default. `input.ssh.version` on a config with no SSH block is
-*undefined*, and an undefined expression makes the rule body fail — so the
-device would silently pass "SSH must be v2". The header of
-`cisco_ios_level1.rego` explains which way each default should point.
+The rule to get right when adding a control is reading optional fields
+through `object.get` with an explicit default, and choosing that default
+carefully: `input.ssh.version` on a config with no SSH block is *undefined*,
+and an undefined expression makes the rule body fail — so the device would
+silently pass "SSH must be v2" if you're not careful. But **do not** default
+to "insecure" the way a single-vendor bundle safely could — we can no longer
+assume any one vendor's out-of-box defaults hold for an arbitrary device.
+Fail closed on absence only for the handful of controls where absence is
+itself directly observable and universal (a login banner exists; logs go
+somewhere off-box) — the header of `generic_level1.rego` explains the split,
+and `generic_level1_test.rego::test_verdict_is_identical_regardless_of_vendor_name`
+plus `test_empty_config_from_an_unknown_vendor_trips_only_the_universal_controls`
+pin it.
 
 ## Known gaps
 
-- Only the CIS Cisco IOS bundle exists. `NIST` and `STIG` are accepted
+- Only the CIS generic bundle exists. `NIST` and `STIG` are accepted
   framework names but have no policy files, and `opa_client` raises rather
   than returning "compliant" for a framework with no bundle loaded.
+- The remediation lookup table only has entries for `cisco` and `fortinet` —
+  every other vendor gets a full compliance verdict but `remediation: null`
+  until someone adds a `.j2` template and a data row for it.
 - `POST /evaluate` is unauthenticated. It sits on the internal network behind
   the Gateway, same as the Ingestion hop.

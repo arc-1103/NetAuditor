@@ -11,6 +11,19 @@ EXPECTED = {
     "ios_snmp_v3_fix.j2", "ios_snmp_community_fix.j2", "ios_ike_encryption_fix.j2",
     "ios_ntp_auth_fix.j2", "ios_password_encryption_fix.j2", "ios_login_banner_fix.j2",
     "ios_disable_http_server.j2", "ios_syslog_fix.j2",
+    "fortinet_disable_telnet.j2", "fortinet_ssh_mgmt_acl_fix.j2",
+    "fortinet_snmp_v3_fix.j2", "fortinet_snmp_community_fix.j2",
+    "fortinet_ike_encryption_fix.j2", "fortinet_ntp_auth_fix.j2",
+    "fortinet_login_banner_fix.j2", "fortinet_disable_http_fix.j2",
+    "fortinet_syslog_fix.j2",
+}
+
+FORTINET_TEMPLATES = {
+    "fortinet_disable_telnet.j2", "fortinet_ssh_mgmt_acl_fix.j2",
+    "fortinet_snmp_v3_fix.j2", "fortinet_snmp_community_fix.j2",
+    "fortinet_ike_encryption_fix.j2", "fortinet_ntp_auth_fix.j2",
+    "fortinet_login_banner_fix.j2", "fortinet_disable_http_fix.j2",
+    "fortinet_syslog_fix.j2",
 }
 
 
@@ -18,10 +31,18 @@ def test_all_compliance_templates_exist():
     assert set(template_engine.available_templates()) == EXPECTED
 
 
-@pytest.mark.parametrize("name", sorted(EXPECTED))
-def test_every_template_renders_a_nonempty_ios_script(name):
+@pytest.mark.parametrize("name", sorted(EXPECTED - FORTINET_TEMPLATES))
+def test_every_ios_template_renders_a_nonempty_script(name):
     script = template_engine.render_template(name)
     assert "configure terminal" in script
+    assert script.endswith("\n")
+
+
+@pytest.mark.parametrize("name", sorted(FORTINET_TEMPLATES))
+def test_every_fortinet_template_renders_a_nonempty_script(name):
+    script = template_engine.render_template(name)
+    assert "config " in script
+    assert script.strip().endswith("end")
     assert script.endswith("\n")
 
 

@@ -2,7 +2,10 @@ fastapi
 uvicorn[standard]
 chromadb
 sentence-transformers
-psycopg[binary]
+sqlalchemy[asyncio]
+asyncpg
+celery
+redis
 pydantic
 pydantic-settings
 pytest

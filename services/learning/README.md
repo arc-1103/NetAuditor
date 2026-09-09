@@ -13,7 +13,7 @@ and retrieves previously learned mappings using semantic similarity.
 - FastAPI
 - ChromaDB
 - SentenceTransformers
-- all-MiniLM-L6-v2 embeddings
+- BAAI/bge-small-en-v1.5 embeddings (override via `EMBEDDING_MODEL`)
 - Docker
 
 ## API

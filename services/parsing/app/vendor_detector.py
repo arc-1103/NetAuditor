@@ -5,8 +5,9 @@ from collections.abc import Iterable
 
 from .models import DeviceContext, VendorDetection
 
-SUPPORTED_VENDORS = frozenset({"cisco", "juniper", "paloalto", "arista"})
-
+# Best-effort labels only — see worker.py. Vendor identity no longer gates
+# whether a device reaches Compliance; an unrecognized vendor is not the
+# same thing as an unparseable one, and the two used to be conflated here.
 PATTERNS = [
     (
         "cisco",

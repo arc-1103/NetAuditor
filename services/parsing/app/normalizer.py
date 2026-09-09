@@ -32,6 +32,9 @@ VENDOR_ALIASES = {
     "arista": "arista",
     "arista eos": "arista",
     "eos": "arista",
+    "fortinet": "fortinet",
+    "fortios": "fortinet",
+    "forti": "fortinet",
 }
 
 HASH_ALIASES = {
@@ -129,13 +132,15 @@ def _alias_or_unknown(value: Any, aliases: dict[str, str], field_name: str) -> s
 
 
 def normalize_vendor(value: Any) -> str:
+    """Canonicalize a known vendor alias; pass any other vendor name through
+    as-is (lowercased/whitespace-collapsed) rather than rejecting it. The
+    vendor list is illustrative, not exhaustive — a vendor the SLM correctly
+    identifies must not be discarded just because nobody added an alias row
+    for it yet."""
     if _unknownish(value):
         return "unknown"
     key = re.sub(r"\s+", " ", _token(value))
-    try:
-        return VENDOR_ALIASES[key]
-    except KeyError as exc:
-        raise InvalidCanonicalTokenError(f"invalid detected_vendor token: {value!r}") from exc
+    return VENDOR_ALIASES.get(key, key)
 
 
 def normalize_hash(value: Any) -> str:

@@ -66,18 +66,25 @@ def test_contract_payload_uses_exact_compliance_worker_keys():
 @pytest.mark.asyncio
 async def test_real_worker_pipeline_output_matches_actual_cross_lane_contract(monkeypatch):
     from app import worker
+    from app.models import SLMResult
 
     class FakeSLM:
         async def generate(self, prompt, config_text, schema, *, device_context):
-            return {
-                "device": {
-                    "detected_vendor": "unknown",
-                    "detected_os": "garbage",
-                    "parsing_confidence": 0.93,
-                },
-                "ssh": {"enabled": True, "version": "2"},
-                "telnet": {"enabled": "DISABLED"},
-            }
+            return SLMResult(
+                value={
+                    "device": {
+                        "detected_vendor": "unknown",
+                        "detected_os": "garbage",
+                        "parsing_confidence": 0.93,
+                    },
+                    "ssh": {"enabled": True, "version": "2"},
+                    "telnet": {"enabled": "DISABLED"},
+                }
+            )
+
+    class FakeRAG:
+        async def retrieve(self, vendor, os_name, config_text):
+            return ""
 
     sent = []
     monkeypatch.setattr(worker.celery_app, "send_task", lambda name, args=None, **kw: sent.append((name, args, kw)))
@@ -95,7 +102,7 @@ async def test_real_worker_pipeline_output_matches_actual_cross_lane_contract(mo
             {"index": 2, "text": "ip access-list extended MGMT\n permit tcp any any eq 22"},
         ],
     }
-    result = await worker._process_config(job, slm_client=FakeSLM())
+    result = await worker._process_config(job, slm_client=FakeSLM(), rag_provider=FakeRAG())
     assert result["status"] == "submitted"
     baseline = result["baseline"]
     schema = _load_contract("security_baseline.schema.json")

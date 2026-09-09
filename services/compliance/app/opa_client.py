@@ -7,9 +7,11 @@ against the policy bundle and returns raw findings
 risk_scorer/db).
 
 One call evaluates the whole `data.compliance.<framework>` subtree rather than
-one package at a time, so adding a vendor means dropping a .rego file into
-policies/ — no Python change. The cost is that every package sees every
-device, which is why each one guards on input.device.detected_vendor.
+one package at a time. The bundle under policies/ is vendor-agnostic — one
+generic ruleset evaluated identically for every device, since Parsing already
+normalizes every vendor into the same SecurityBaseline schema. Vendor-specific
+remediation-template selection lives as data inside that bundle, not as
+separate per-vendor packages — see policies/generic/generic_level1.rego.
 """
 
 import os

@@ -1,0 +1,7 @@
+! CIS-FORTIOS-1.1.2 - Disable Telnet on the management interface
+! REVIEW: confirm {{ interface | default('mgmt') }} is the correct interface before deployment
+config system interface
+    edit "{{ interface | default('mgmt') }}"
+        set allowaccess https ssh ping
+    next
+end
