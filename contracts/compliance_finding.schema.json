@@ -45,6 +45,12 @@
       "minimum": 0,
       "description": "Severity weight from app/risk_scorer.py. Summed across findings and subtracted from 100 to give the run's compliance_score."
     },
+    "blast_radius": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Device ids reachable from this finding's device via routing adjacency in the GraphRAG topology graph (app/graph_client.py), out to GRAPH_BLAST_RADIUS_MAX_HOPS. Added by app/evaluator.py, not the Rego rule — empty when the topology graph is unavailable or the device has no known routing neighbors."
+    },
     "created_at": {
       "type": "string",
       "format": "date-time",

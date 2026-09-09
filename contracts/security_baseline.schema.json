@@ -143,6 +143,14 @@
         "tcp_small_servers": { "$ref": "#/definitions/ProtocolStatus" },
         "udp_small_servers": { "$ref": "#/definitions/ProtocolStatus" }
       }
+    },
+    "topology": {
+      "type": "object",
+      "description": "Interface/adjacency facts feeding the GraphRAG topology graph (services/compliance/app/graph_client.py). Not read by OPA policy — no bearing on the compliance verdict, only on blast-radius tracing once a finding exists.",
+      "properties": {
+        "interfaces": { "type": "array", "items": { "$ref": "#/definitions/Interface" } },
+        "routing_neighbors": { "type": "array", "items": { "$ref": "#/definitions/RoutingNeighbor" } }
+      }
     }
   },
   "definitions": {
@@ -170,6 +178,27 @@
         "dh_group": { "type": ["integer", "null"] },
         "lifetime_seconds": { "type": ["integer", "null"] },
         "authentication_method": { "type": ["string", "null"] }
+      }
+    },
+    "Interface": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "ip_address": { "type": ["string", "null"] },
+        "subnet_mask": { "type": ["string", "null"] },
+        "description": { "type": ["string", "null"] },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    },
+    "RoutingNeighbor": {
+      "type": "object",
+      "required": ["protocol"],
+      "properties": {
+        "protocol": { "type": "string", "description": "e.g. 'static', 'ospf', 'bgp', 'eigrp' — free text, not a closed enum." },
+        "neighbor_ip": { "type": ["string", "null"] },
+        "remote_asn": { "type": ["integer", "null"] },
+        "local_asn": { "type": ["integer", "null"] }
       }
     }
   }
