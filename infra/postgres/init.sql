@@ -28,6 +28,28 @@ CREATE TABLE IF NOT EXISTS audit_runs (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Owned by Learning lane (see services/learning/backend/app/). One row per
+-- config chunk that failed Pydantic schema validation during Parsing and
+-- needs a human to map its CLI tokens to a SecurityBaseline field. `block_id`
+-- is the stable identity Parsing/Learning pass back and forth (e.g.
+-- "<audit_run_id>:<chunk_index>"), not a generated surrogate key, so a
+-- resubmitted mapping for the same block is an update, not a duplicate row.
+-- `chunk_context` carries the device metadata known at parse time (vendor,
+-- os, hostname, surrounding chunk text) so the mapping UI can show it without
+-- a second round-trip to Parsing.
+CREATE TABLE IF NOT EXISTS learning_queue (
+    block_id      TEXT PRIMARY KEY,
+    audit_run_id  UUID NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+    raw_text      TEXT NOT NULL,
+    chunk_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status        TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'MAPPED', 'DISMISSED')),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The mapping UI's main query is "oldest unresolved blocks first".
+CREATE INDEX IF NOT EXISTS idx_learning_queue_status
+    ON learning_queue (status, created_at);
+
 -- Owned by Compliance lane (see services/compliance/app/db.py). One row per
 -- FAILED control; a control that passed is simply absent. Shape mirrors
 -- contracts/compliance_finding.schema.json, which Remediation, Reporting and
