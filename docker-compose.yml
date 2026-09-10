@@ -44,6 +44,7 @@ services:
 
   chromadb:
     image: chromadb/chroma
+    profiles: ["advanced"]
     networks: [audit-net]
     volumes:
       - chromadata:/chroma/chroma
@@ -66,6 +67,7 @@ services:
 
   ollama:
     image: ollama/ollama
+    profiles: ["model"]
     networks: [audit-net]
     volumes:
       - ollamadata:/root/.ollama
@@ -94,10 +96,12 @@ services:
 
   batfish:
     image: batfish/allinone
+    profiles: ["advanced"]
     networks: [audit-net]
 
   neo4j:
     image: neo4j:5.24.0
+    profiles: ["advanced"]
     # Not env_file: .env — the neo4j image maps every NEO4J_-prefixed var it
     # receives into neo4j.conf (NEO4J_HOST -> host, NEO4J_BOLT_PORT ->
     # bolt.port, ...) and refuses to start on a setting it doesn't
@@ -153,8 +157,6 @@ services:
       opa: {condition: service_healthy}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-      neo4j: {condition: service_healthy}
-      learning: {condition: service_healthy}
     networks: [audit-net]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=2)"]
@@ -171,13 +173,12 @@ services:
       opa: {condition: service_healthy}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-      neo4j: {condition: service_healthy}
-      learning: {condition: service_healthy}
     networks: [audit-net]
     restart: unless-stopped
 
   learning:
     build: ./services/learning/backend
+    profiles: ["advanced"]
     env_file: ./services/learning/.env
     depends_on:
       postgres: {condition: service_healthy}
@@ -191,6 +192,7 @@ services:
 
   learning-worker:
     build: ./services/learning/backend
+    profiles: ["advanced"]
     env_file: ./services/learning/.env
     command: python -m app.unknown_handler
     depends_on:
@@ -204,7 +206,6 @@ services:
     env_file: ./services/remediation/.env
     depends_on:
       postgres: {condition: service_healthy}
-      learning: {condition: service_healthy}
     networks: [audit-net]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=2)"]
@@ -234,7 +235,6 @@ services:
     depends_on:
       ingestion: {condition: service_healthy}
       compliance: {condition: service_healthy}
-      learning: {condition: service_healthy}
       remediation: {condition: service_healthy}
       reporting: {condition: service_healthy}
     networks: [audit-net]

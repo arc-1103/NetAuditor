@@ -15,7 +15,11 @@ DSN = os.getenv("POSTGRES_DSN", "postgresql+asyncpg://netaudit:changeme_in_local
 
 async def main():
     engine = create_async_engine(DSN)
-    password_hash = pwd_context.hash("changeme")
+    email = os.getenv("NETAUDIT_ADMIN_EMAIL", "admin@netaudit.local")
+    password = os.getenv("NETAUDIT_ADMIN_PASSWORD", "changeme")
+    if os.getenv("APP_ENV", "development").lower() not in {"development", "test"} and password == "changeme":
+        raise RuntimeError("Set NETAUDIT_ADMIN_PASSWORD outside local development")
+    password_hash = pwd_context.hash(password)
     async with engine.begin() as conn:
         await conn.execute(
             text("""
@@ -23,9 +27,9 @@ async def main():
                 VALUES (:email, :hash, 'admin')
                 ON CONFLICT (email) DO NOTHING
             """),
-            {"email": "admin@netaudit.local", "hash": password_hash},
+            {"email": email, "hash": password_hash},
         )
-    print("Seeded admin@netaudit.local / changeme")
+    print(f"Seeded {email}. Password source: NETAUDIT_ADMIN_PASSWORD")
 
 if __name__ == "__main__":
     asyncio.run(main())

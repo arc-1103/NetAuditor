@@ -28,7 +28,7 @@ def test_task_evaluates_and_returns_the_summary(monkeypatch):
     result = worker.evaluate_baseline({"audit_run_id": RUN_ID, "framework": "CIS", "baseline": BASELINE})
 
     assert result == {"compliance_score": 60}
-    spy.assert_awaited_once_with(BASELINE, "CIS", RUN_ID)
+    spy.assert_awaited_once_with(BASELINE, "CIS", RUN_ID, source_text=None)
 
 
 def test_task_defaults_the_framework_when_absent(monkeypatch):
@@ -37,7 +37,7 @@ def test_task_defaults_the_framework_when_absent(monkeypatch):
 
     worker.evaluate_baseline({"audit_run_id": RUN_ID, "baseline": BASELINE})
 
-    spy.assert_awaited_once_with(BASELINE, None, RUN_ID)
+    spy.assert_awaited_once_with(BASELINE, None, RUN_ID, source_text=None)
 
 
 def test_task_rejects_a_job_without_an_audit_run_id():

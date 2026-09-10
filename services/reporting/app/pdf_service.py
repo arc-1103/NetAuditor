@@ -15,11 +15,18 @@ SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 def summarize(findings: list[dict]) -> dict:
     counts = Counter(str(f.get("severity", "")).upper() for f in findings)
     risk = sum(int(f.get("risk_score", 0)) for f in findings)
+    failed = len({f.get("control_id") for f in findings if f.get("control_id")})
+    evaluated = max(int(os.getenv("CONTROLS_EVALUATED", "11")), failed)
+    passed = max(0, evaluated - failed)
     return {
         "total_findings": len(findings),
         "by_severity": {level: counts[level] for level in SEVERITY_ORDER},
         "risk_score": risk,
         "compliance_score": max(0, 100 - risk),
+        "controls_evaluated": evaluated,
+        "controls_failed": failed,
+        "controls_passed": passed,
+        "control_pass_rate": round((passed / evaluated) * 100) if evaluated else 0,
     }
 
 
@@ -44,8 +51,12 @@ def build_json_report(report_data: dict) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "audit_run": {
             key: report_data.get(key)
-            for key in ("id", "original_filename", "file_hash", "status", "created_at", "updated_at")
+            for key in (
+                "id", "original_filename", "file_hash", "status", "detected_vendor",
+                "detected_os", "parsing_confidence", "schema_version", "created_at", "updated_at",
+            )
         },
+        "evaluation": report_data.get("evaluation"),
         "summary": summarize(report_data.get("findings", [])),
         "findings": report_data.get("findings", []),
         "remediations": report_data.get("remediations", []),

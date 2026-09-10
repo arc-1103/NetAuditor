@@ -43,8 +43,29 @@ async def sqlite_session(monkeypatch):
                     uploaded_by       TEXT,
                     status            TEXT NOT NULL DEFAULT 'INGESTED',
                     status_detail     TEXT,
+                    detected_vendor   TEXT,
+                    detected_os       TEXT,
+                    parsing_confidence REAL,
+                    schema_version    TEXT,
+                    baseline_snapshot TEXT,
                     created_at        TEXT,
                     updated_at        TEXT
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE audit_evaluations (
+                    id                    TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    audit_run_id          TEXT NOT NULL,
+                    framework             TEXT NOT NULL,
+                    policy_bundle_version TEXT NOT NULL,
+                    schema_version        TEXT,
+                    baseline_sha256       TEXT NOT NULL,
+                    findings_snapshot     TEXT NOT NULL,
+                    evaluated_at          TEXT
                 )
                 """
             )
@@ -63,6 +84,7 @@ async def sqlite_session(monkeypatch):
                     remediation  TEXT,
                     risk_score   INTEGER NOT NULL DEFAULT 0,
                     blast_radius TEXT NOT NULL DEFAULT '[]',
+                    source_lines TEXT NOT NULL DEFAULT '[]',
                     created_at   TEXT,
                     PRIMARY KEY (audit_run_id, control_id)
                 )
@@ -155,6 +177,30 @@ async def test_save_findings_accepts_a_clean_device(sqlite_session):
 
     assert count == 0
     assert status == db.STATUS_EVALUATED
+
+
+async def test_save_findings_records_immutable_provenance_and_device_metadata(sqlite_session):
+    baseline = {
+        "schema_version": "1.0.0",
+        "device": {
+            "detected_vendor": "cisco",
+            "detected_os": "IOS-XE",
+            "parsing_confidence": 0.96,
+            "config_sha256": "b" * 64,
+        },
+    }
+    await db.save_findings(RUN_ID, [_finding("CIS-NET-1.1.1")], baseline=baseline, framework="CIS")
+    await db.save_findings(RUN_ID, [], baseline=baseline, framework="CIS")
+
+    async with sqlite_session() as session:
+        history = (await session.execute(text("SELECT * FROM audit_evaluations"))).mappings().all()
+        run = (await session.execute(text("SELECT * FROM audit_runs WHERE id=:id"), {"id": RUN_ID})).mappings().one()
+
+    assert len(history) == 2
+    assert history[0]["policy_bundle_version"] == db.POLICY_BUNDLE_VERSION
+    assert len(history[0]["baseline_sha256"]) == 64
+    assert run["detected_vendor"] == "cisco"
+    assert run["parsing_confidence"] == 0.96
 
 
 async def test_get_audit_run_returns_run_with_findings(sqlite_session):

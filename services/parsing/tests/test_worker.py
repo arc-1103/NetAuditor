@@ -106,7 +106,7 @@ async def test_vendor_context_is_detected_once_and_passed_to_all_chunks(monkeypa
     assert all("Detected vendor: cisco" in prompt for prompt, *_ in fake_slm.prompts)
     assert sent[0][0][0] == "compliance.evaluate_baseline"
     payload = sent[0][1]["args"][0]
-    assert set(payload) == {"audit_run_id", "framework", "baseline"}
+    assert set(payload) == {"audit_run_id", "framework", "baseline", "source_text"}
     assert payload["audit_run_id"] == make_job()["job_id"]
     assert payload["framework"] == "CIS"
     assert payload["baseline"]["device"]["config_sha256"] == make_job()["file_hash"]

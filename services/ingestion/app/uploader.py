@@ -59,10 +59,15 @@ def get_minio_client() -> Minio:
 
 
 async def validate_and_store(file) -> dict:
-    contents = await file.read()
-
-    if len(contents) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
-        raise ValueError(f"File exceeds {MAX_UPLOAD_SIZE_MB}MB limit")
+    max_bytes = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    chunks = []
+    total = 0
+    while chunk := await file.read(min(1024 * 1024, max_bytes + 1 - total)):
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"File exceeds {MAX_UPLOAD_SIZE_MB}MB limit")
+        chunks.append(chunk)
+    contents = b"".join(chunks)
 
     ext = os.path.splitext(file.filename)[1]
     if ext not in ALLOWED_EXTENSIONS:

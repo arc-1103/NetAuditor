@@ -9,7 +9,7 @@ export interface Finding {
   evidence: string;
   remediation: string | null;
   risk_score: number;
-  source_lines?: number[];
+  source_lines?: Array<number | { line: number; text: string }>;
   blast_radius?: string[];
 }
 
@@ -18,6 +18,10 @@ export interface Summary {
   by_severity: Record<Severity, number>;
   risk_score: number;
   compliance_score: number;
+  controls_evaluated?: number;
+  controls_failed?: number;
+  controls_passed?: number;
+  control_pass_rate?: number;
 }
 
 export interface AuditRun {
@@ -31,6 +35,7 @@ export interface AuditRun {
   findings: Finding[];
   summary: Summary;
   anomaly?: { status: string; is_anomaly?: boolean; anomaly_score?: number } | null;
+  policy_bundle_version?: string;
 }
 
 export interface Remediation {

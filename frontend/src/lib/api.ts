@@ -45,7 +45,7 @@ export async function getAudit(runId: string, token: string): Promise<AuditRun> 
   if (USE_MOCK) { await wait(1050); return { ...structuredClone(mockAudit), id: runId }; }
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const run = await request<AuditRun>(`/api/audit-runs/${runId}`, token);
-    if (["EVALUATED", "COMPLETE", "REVIEW_REQUIRED", "FAILED"].includes(run.status)) return run;
+    if (["EVALUATED", "COMPLETE", "NEEDS_REVIEW", "FAILED"].includes(run.status)) return run;
     await wait(1500);
   }
   throw new Error("The audit is still processing. Reopen it from audit history shortly.");
@@ -83,4 +83,12 @@ export async function generateReport(runId: string, token: string) {
 
 export function reportUrl(runId: string, kind: "download" | "preview" | "json" | "cef") {
   return `${API_BASE}/api/reports/${runId}/${kind}`;
+}
+
+export async function openProtectedReport(runId: string, token: string, kind: "download" | "preview") {
+  const response = await fetch(reportUrl(runId, kind), { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error("The generated report could not be opened");
+  const url = URL.createObjectURL(await response.blob());
+  window.open(url, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

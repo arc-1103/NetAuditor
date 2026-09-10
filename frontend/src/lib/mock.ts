@@ -24,7 +24,7 @@ export const mockAudit: AuditRun = {
   created_at: "2026-09-10T09:12:42Z",
   device: { detected_vendor: "cisco", detected_os: "IOS-XE", parsing_confidence: 0.96 },
   findings,
-  summary: { total_findings: findings.length, by_severity: severityCounts, risk_score: 165, compliance_score: 32 },
+  summary: { total_findings: findings.length, by_severity: severityCounts, risk_score: 165, compliance_score: 0, controls_evaluated: 11, controls_failed: 6, controls_passed: 5, control_pass_rate: 45 },
   anomaly: { status: "insufficient_peers" },
 };
 

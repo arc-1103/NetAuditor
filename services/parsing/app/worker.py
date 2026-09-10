@@ -361,6 +361,7 @@ async def _process_config(
         "audit_run_id": job["job_id"],
         "framework": "CIS",
         "baseline": baseline_json,
+        "source_text": "\n".join(chunk["text"] for chunk in job["chunks"]),
     }
 
     # Cross-lane communication remains Celery-only.

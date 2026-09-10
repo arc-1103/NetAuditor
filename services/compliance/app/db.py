@@ -8,6 +8,7 @@ Postgres instance.
 """
 
 import json
+import hashlib
 import os
 from datetime import datetime, timezone
 
@@ -22,17 +23,24 @@ POSTGRES_DSN = os.getenv(
 # Set once compliance has written its findings for a run. Reporting picks the
 # run up from here; the run only becomes COMPLETE after the PDF is generated.
 STATUS_EVALUATED = "EVALUATED"
+POLICY_BUNDLE_VERSION = os.getenv("POLICY_BUNDLE_VERSION", "cis-generic-level1@1.0.0")
 
 engine = create_async_engine(POSTGRES_DSN, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 _FINDING_COLUMNS = (
     "control_id", "framework", "title", "status", "severity", "evidence", "remediation", "risk_score",
-    "blast_radius",
+    "blast_radius", "source_lines",
 )
 
 
-async def save_findings(audit_run_id: str, findings: list[dict]) -> None:
+async def save_findings(
+    audit_run_id: str,
+    findings: list[dict],
+    *,
+    baseline: dict | None = None,
+    framework: str = "CIS",
+) -> None:
     """Replace this run's findings and mark it EVALUATED, in one transaction.
 
     Replace rather than append: re-running an audit after a policy update must
@@ -51,20 +59,62 @@ async def save_findings(audit_run_id: str, findings: list[dict]) -> None:
                         """
                         INSERT INTO compliance_findings
                             (audit_run_id, control_id, framework, title, status,
-                             severity, evidence, remediation, risk_score, blast_radius)
+                             severity, evidence, remediation, risk_score, blast_radius, source_lines)
                         VALUES
                             (:audit_run_id, :control_id, :framework, :title, :status,
-                             :severity, :evidence, :remediation, :risk_score, :blast_radius)
+                             :severity, :evidence, :remediation, :risk_score, :blast_radius, :source_lines)
                         """
                     ),
                     [
                         {
                             "audit_run_id": audit_run_id,
-                            **{c: f.get(c) for c in _FINDING_COLUMNS if c != "blast_radius"},
+                            **{c: f.get(c) for c in _FINDING_COLUMNS if c not in {"blast_radius", "source_lines"}},
                             "blast_radius": json.dumps(f.get("blast_radius") or []),
+                            "source_lines": json.dumps(f.get("source_lines") or []),
                         }
                         for f in findings
                     ],
+                )
+            if baseline is not None:
+                canonical = json.dumps(baseline, sort_keys=True, separators=(",", ":"))
+                device = baseline.get("device", {})
+                now = datetime.now(timezone.utc)
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO audit_evaluations
+                            (audit_run_id, framework, policy_bundle_version, schema_version,
+                             baseline_sha256, findings_snapshot, evaluated_at)
+                        VALUES (:run_id, :framework, :policy_version, :schema_version,
+                                :baseline_sha256, :findings, :evaluated_at)
+                        """
+                    ),
+                    {
+                        "run_id": audit_run_id,
+                        "framework": framework,
+                        "policy_version": POLICY_BUNDLE_VERSION,
+                        "schema_version": baseline.get("schema_version"),
+                        "baseline_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+                        "findings": json.dumps(findings),
+                        "evaluated_at": now,
+                    },
+                )
+                await session.execute(
+                    text(
+                        """
+                        UPDATE audit_runs SET detected_vendor=:vendor, detected_os=:detected_os,
+                            parsing_confidence=:confidence, schema_version=:schema_version,
+                            baseline_snapshot=:baseline WHERE id=:run_id
+                        """
+                    ),
+                    {
+                        "vendor": device.get("detected_vendor"),
+                        "detected_os": device.get("detected_os"),
+                        "confidence": device.get("parsing_confidence"),
+                        "schema_version": baseline.get("schema_version"),
+                        "baseline": canonical,
+                        "run_id": audit_run_id,
+                    },
                 )
             # updated_at is bound from Python rather than SQL now() so this
             # statement stays dialect-neutral for the SQLite-backed tests.
@@ -129,7 +179,9 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
                 text(
                     """
                     SELECT id, file_hash, original_filename, storage_path,
-                           uploaded_by, status, status_detail, created_at, updated_at
+                           uploaded_by, status, status_detail, detected_vendor,
+                           detected_os, parsing_confidence, schema_version,
+                           created_at, updated_at
                     FROM audit_runs WHERE id = :run_id
                     """
                 ),
@@ -145,7 +197,7 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
                 text(
                     """
                     SELECT control_id, framework, title, status, severity,
-                           evidence, remediation, risk_score, blast_radius, created_at
+                           evidence, remediation, risk_score, blast_radius, source_lines, created_at
                     FROM compliance_findings
                     WHERE audit_run_id = :run_id
                     ORDER BY control_id
@@ -168,10 +220,17 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
             )
         ).mappings().first()
 
+    result = _jsonable(run_row)
+    result["device"] = {
+        "detected_vendor": result.pop("detected_vendor", None),
+        "detected_os": result.pop("detected_os", None),
+        "parsing_confidence": result.pop("parsing_confidence", None),
+    }
     return {
-        **_jsonable(run_row),
+        **result,
         "findings": [_jsonable(r) for r in finding_rows],
         "anomaly": _jsonable(anomaly_row) if anomaly_row is not None else None,
+        "policy_bundle_version": POLICY_BUNDLE_VERSION,
     }
 
 
@@ -184,4 +243,6 @@ def _jsonable(row) -> dict:
         value["status_detail"] = json.loads(value["status_detail"])
     if isinstance(value.get("blast_radius"), str):
         value["blast_radius"] = json.loads(value["blast_radius"])
+    if isinstance(value.get("source_lines"), str):
+        value["source_lines"] = json.loads(value["source_lines"])
     return value

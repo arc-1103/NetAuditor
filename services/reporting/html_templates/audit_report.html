@@ -33,7 +33,7 @@
   <div class="meta">Audit {{ run.id }} · {{ run.original_filename or "Unnamed configuration" }} · Generated {{ generated_at }}</div>
 
   <div class="score-grid">
-    <div class="score"><strong>{{ summary.compliance_score }}%</strong>Compliance score</div>
+    <div class="score"><strong>{{ summary.control_pass_rate }}%</strong>Controls passed (prototype set)</div>
     <div class="score"><strong>{{ summary.total_findings }}</strong>Failed controls</div>
     <div class="score"><strong>{{ summary.risk_score }}</strong>Aggregate risk</div>
   </div>
@@ -82,8 +82,9 @@
 
   <h2>Integrity & Method</h2>
   <p>Configuration SHA-256: <code>{{ run.file_hash }}</code></p>
+  <p>Detected platform: <b>{{ run.detected_vendor or "unknown" }}</b> / {{ run.detected_os or "unknown" }} · Parsing confidence: {% if run.parsing_confidence is defined and run.parsing_confidence is not none %}{{ "%.0f" | format(run.parsing_confidence * 100) }}%{% else %}not recorded{% endif %} · Schema: {{ run.schema_version or "not recorded" }}</p>
+  {% if run.evaluation %}<p>Policy bundle: <code>{{ run.evaluation.policy_bundle_version }}</code> · Baseline SHA-256: <code>{{ run.evaluation.baseline_sha256 }}</code> · Evaluated: {{ run.evaluation.evaluated_at }}</p>{% endif %}
   <p>Compliance decisions were produced by deterministic OPA policies and are never influenced by an LLM. Remediation commands are rendered from version-controlled Jinja2 templates wherever one exists for the control's vendor; a control with no committed template instead gets a machine-synthesized proposal, marked "AI-synthesized" above, which carries a mandatory rollback script and can never be approved through the normal flow without manual verification.</p>
   <footer>NetAudit Engine prototype · This report is an engineering aid and does not replace an authorized change-management process.</footer>
 </body>
 </html>
-

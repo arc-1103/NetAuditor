@@ -29,7 +29,7 @@ for attempt in $(seq 1 60); do
   STATUS="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", "UNKNOWN"))' <<<"$AUDIT_RESPONSE")"
   case "$STATUS" in
     EVALUATED|COMPLETE) break ;;
-    FAILED|REVIEW_REQUIRED) echo "$AUDIT_RESPONSE"; echo "Audit stopped with status $STATUS" >&2; exit 1 ;;
+    FAILED|NEEDS_REVIEW) echo "$AUDIT_RESPONSE"; echo "Audit stopped with status $STATUS" >&2; exit 1 ;;
   esac
   sleep 2
 done
