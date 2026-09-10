@@ -8,7 +8,8 @@ things only — it is never on the compliance verdict path:
 | `parsing` | `app/slm_client.py` | Per-chunk CLI → normalized-JSON extraction, with structured output enforced via Ollama's `format` JSON-schema field. |
 | `remediation` | `app/rag_remediation.py` | Agentic-RAG fallback that drafts a CLI fix only when a finding's vendor has no committed Jinja2 template. Every other remediation stays on the deterministic `template_engine.py` path. |
 
-Both services default to model **`qwen2.5-coder:7b`** and talk to Ollama over
+Both services default to model **`qwen2.5:7b-instruct-q4_K_M`** (Qwen2.5
+Instruct 7B, int4/Q4_K_M quantized) and talk to Ollama over
 plain HTTP — there's no client library dependency, no API key, and nothing to
 authenticate.
 
@@ -50,13 +51,13 @@ run:
 
 ```bash
 # via the docker-compose container:
-docker compose exec ollama ollama pull qwen2.5-coder:7b
+docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
 
 # or, if running Ollama natively:
-ollama pull qwen2.5-coder:7b
+ollama pull qwen2.5:7b-instruct-q4_K_M
 ```
 
-`qwen2.5-coder:7b` is a ~4.7 GB download. Any Ollama-supported model works —
+`qwen2.5:7b-instruct-q4_K_M` is a ~4.7 GB download. Any Ollama-supported model works —
 override it per service with `OLLAMA_MODEL` in that service's `.env` if you
 pull something else, but keep `parsing` and `remediation` in sync unless you
 have a specific reason not to (both currently default to the same model).
@@ -69,7 +70,7 @@ Set per-service in `services/parsing/.env` and `services/remediation/.env`
 | Var | Default | Notes |
 |---|---|---|
 | `OLLAMA_HOST` | `http://ollama:11434` | Base URL Ollama's HTTP API is served on. |
-| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | Model tag, must already be pulled. |
+| `OLLAMA_MODEL` | `qwen2.5:7b-instruct-q4_K_M` | Model tag, must already be pulled. |
 | `OLLAMA_TIMEOUT_SECONDS` | `60` (parsing only) | Per-request timeout to Ollama. |
 | `USE_MOCK_SLM` | `true` (parsing) / `false` (remediation) | See §4. |
 
@@ -119,7 +120,7 @@ job (parsing → chunk routed to human review or job error; remediation →
 - **Timeouts on first request** — the first call after a pull/restart loads
   the model into memory and is slower; increase `OLLAMA_TIMEOUT_SECONDS` if
   needed rather than assuming Ollama is down.
-- **No GPU / slow on CPU** — `qwen2.5-coder:7b` runs on CPU but is
+- **No GPU / slow on CPU** — `qwen2.5:7b-instruct-q4_K_M` runs on CPU but is
   noticeably slower; for a quick smoke test prefer mock mode (§4) and only
   switch on the real model when you actually need real extraction/CLI
   quality.

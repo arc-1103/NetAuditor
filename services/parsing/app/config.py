@@ -9,7 +9,7 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct-q4_K_M")
     schema_package_version: str = os.getenv("SCHEMA_PACKAGE_VERSION", "1.0.0")
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.60"))
     chromadb_host: str = os.getenv("CHROMADB_HOST", "chromadb")

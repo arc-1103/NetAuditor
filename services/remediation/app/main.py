@@ -18,7 +18,7 @@ _manual_provider: RemediationManualProvider = (
 )
 _slm = OllamaSLMClient(
     os.getenv("OLLAMA_HOST", "http://ollama:11434"),
-    os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b"),
+    os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct-q4_K_M"),
     # Defaults to false, unlike Parsing's USE_MOCK_SLM: Parsing's mock
     # extracts real values from the real input text, but this service's
     # mock (app/slm_client.py) returns a fixed placeholder string
