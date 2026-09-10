@@ -33,6 +33,7 @@ class EvaluateRequest(BaseModel):
     baseline: dict
     framework: str | None = None
     audit_run_id: str | None = None
+    source_text: str | None = None
 
 
 @app.get("/health")
@@ -48,7 +49,9 @@ async def evaluate(body: EvaluateRequest):
     as a dry-run against a config that was never uploaded.
     """
     try:
-        return await evaluate_baseline(body.baseline, body.framework, body.audit_run_id)
+        return await evaluate_baseline(
+            body.baseline, body.framework, body.audit_run_id, source_text=body.source_text
+        )
     except ValueError as e:  # unknown framework
         raise HTTPException(status_code=400, detail=str(e))
     except OPAEvaluationError as e:

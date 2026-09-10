@@ -1,0 +1,21 @@
+# Final prototype release checklist
+
+- [ ] Clean checkout of the intended commit
+- [ ] CI is green
+- [ ] `npm audit --audit-level=high` is clean
+- [ ] `docker compose config` succeeds
+- [ ] All containers are healthy
+- [ ] Database migrations are applied
+- [ ] Admin secret and password are not defaults
+- [ ] Cisco insecure fixture produces reviewed expected findings
+- [ ] Cisco hardened fixture excludes reviewed insecure controls
+- [ ] Fortinet fixture detects Fortinet and produces reviewed findings
+- [ ] Unsafe remediation approval returns HTTP 409
+- [ ] PDF, JSON and CEF exports open through authenticated UI
+- [ ] Benchmark result records machine hardware and commit SHA
+- [ ] Backup PDF and screen recording are available offline
+- [ ] Slides use only claims permitted by the claims checklist
+- [ ] Dashboard is readable at the presentation projector's resolution
+- [ ] Every team member can explain the four-step workflow without jargon
+- [ ] Mock fallback is open in a second tab and clearly labelled as fallback
+- [ ] Model images and weights are present before disconnecting venue internet

@@ -10,6 +10,7 @@ originally pointed at: four integers that change roughly never don't earn a
 config file, a parser, and a failure mode when it's missing.
 """
 
+import os
 from collections import Counter
 
 SEVERITY_WEIGHTS = {
@@ -24,6 +25,7 @@ SEVERITY_WEIGHTS = {
 UNKNOWN_SEVERITY_WEIGHT = SEVERITY_WEIGHTS["MEDIUM"]
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+CONTROLS_EVALUATED = int(os.getenv("CONTROLS_EVALUATED", "11"))
 
 
 def score_finding(finding: dict) -> int:
@@ -46,9 +48,16 @@ def summarize(findings: list[dict]) -> dict:
     counts = Counter(str(f.get("severity", "")).upper() for f in findings)
     risk_score = sum(f.get("risk_score", score_finding(f)) for f in findings)
 
+    failed = len({f.get("control_id") for f in findings if f.get("control_id")})
+    evaluated = max(CONTROLS_EVALUATED, failed)
+    passed = max(0, evaluated - failed)
     return {
         "total_findings": len(findings),
         "by_severity": {level: counts.get(level, 0) for level in SEVERITY_ORDER},
         "risk_score": risk_score,
         "compliance_score": max(0, 100 - risk_score),
+        "controls_evaluated": evaluated,
+        "controls_failed": failed,
+        "controls_passed": passed,
+        "control_pass_rate": round((passed / evaluated) * 100) if evaluated else 0,
     }

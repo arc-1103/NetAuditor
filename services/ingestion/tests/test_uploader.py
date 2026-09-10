@@ -23,9 +23,14 @@ class FakeUploadFile:
     def __init__(self, filename: str, content: bytes):
         self.filename = filename
         self._content = content
+        self._offset = 0
 
-    async def read(self) -> bytes:
-        return self._content
+    async def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            size = len(self._content) - self._offset
+        chunk = self._content[self._offset:self._offset + size]
+        self._offset += len(chunk)
+        return chunk
 
 
 def make_fake_minio_client(existing_hash: str | None = None) -> MagicMock:

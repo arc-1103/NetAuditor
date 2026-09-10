@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS audit_runs (
     uploaded_by       UUID REFERENCES users(id),
     status            TEXT NOT NULL DEFAULT 'INGESTED',
     status_detail     JSONB,
+    detected_vendor   TEXT,
+    detected_os       TEXT,
+    parsing_confidence DOUBLE PRECISION,
+    schema_version    TEXT,
+    baseline_snapshot JSONB,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -85,6 +90,7 @@ CREATE TABLE IF NOT EXISTS compliance_findings (
     -- Empty when the topology graph is unavailable or the device has no
     -- known routing neighbors, not when the finding is absent.
     blast_radius  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_lines  JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (audit_run_id, control_id)
 );
@@ -92,6 +98,19 @@ CREATE TABLE IF NOT EXISTS compliance_findings (
 -- The dashboard's main query is "all findings for this run, worst first".
 CREATE INDEX IF NOT EXISTS idx_findings_run_severity
     ON compliance_findings (audit_run_id, severity);
+
+CREATE TABLE IF NOT EXISTS audit_evaluations (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    audit_run_id          UUID NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+    framework             TEXT NOT NULL,
+    policy_bundle_version TEXT NOT NULL,
+    schema_version        TEXT,
+    baseline_sha256       TEXT NOT NULL,
+    findings_snapshot     JSONB NOT NULL,
+    evaluated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_evaluations_run
+    ON audit_evaluations (audit_run_id, evaluated_at DESC);
 
 -- Unsupervised semantic anomaly detection (services/compliance/app/anomaly_client.py).
 -- A separate table from compliance_findings, not a column on it: this is a

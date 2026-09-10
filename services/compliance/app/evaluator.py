@@ -10,7 +10,7 @@ POST /evaluate used in demos and integration tests.
 import logging
 import os
 
-from app import anomaly_client, db, graph_client, opa_client, risk_scorer
+from app import anomaly_client, db, evidence_locator, graph_client, opa_client, risk_scorer
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ async def evaluate_baseline(
     framework: str | None = None,
     audit_run_id: str | None = None,
     *,
+    source_text: str | None = None,
     graph: graph_client.TopologyGraphProvider | None = None,
     anomaly: anomaly_client.AnomalyDetectionProvider | None = None,
 ) -> dict:
@@ -122,11 +123,18 @@ async def evaluate_baseline(
     except Exception as exc:
         logger.warning("Anomaly detection unavailable for %s: %s", device_id, exc)
 
-    findings = [{**f, "blast_radius": blast_radius} for f in findings]
+    findings = evidence_locator.attach(
+        [{**f, "blast_radius": blast_radius} for f in findings], source_text
+    )
     summary = risk_scorer.summarize(findings)
 
     if audit_run_id:
-        await db.save_findings(audit_run_id, findings)
+        await db.save_findings(
+            audit_run_id,
+            findings,
+            baseline=baseline,
+            framework=(framework or opa_client.DEFAULT_FRAMEWORK).upper(),
+        )
         if device_id:
             await db.save_anomaly(audit_run_id, device_id, anomaly_result)
 

@@ -59,8 +59,9 @@ def test_contract_payload_uses_exact_compliance_worker_keys():
         "audit_run_id": "00000000-0000-0000-0000-000000000001",
         "framework": "CIS",
         "baseline": {},
+        "source_text": "sanitized configuration",
     }
-    assert set(payload) == {"audit_run_id", "framework", "baseline"}
+    assert set(payload) == {"audit_run_id", "framework", "baseline", "source_text"}
 
 
 @pytest.mark.asyncio

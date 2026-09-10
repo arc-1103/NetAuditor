@@ -14,6 +14,7 @@ from app.db import get_session
 JWT_SECRET = os.getenv("JWT_SECRET", "changeme_generate_a_real_secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRY_MIN = int(os.getenv("JWT_EXPIRY_MIN", "60"))
+INSECURE_DEFAULT_SECRET = "changeme_generate_a_real_secret"
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -48,3 +49,23 @@ async def get_current_user(authorization: str = Header(default=None)) -> dict:
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     return payload
+
+
+def roles_dependency(*roles: str):
+    async def dependency(user: dict = Depends(get_current_user)) -> dict:
+        if user.get("role") not in roles:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return user
+    return dependency
+
+
+require_admin = roles_dependency("admin")
+require_operator = roles_dependency("admin", "operator")
+require_reader = roles_dependency("admin", "operator", "auditor")
+
+
+def validate_runtime_secret() -> None:
+    """Refuse a known JWT secret outside explicitly local development."""
+    if os.getenv("APP_ENV", "development").lower() not in {"development", "test"}:
+        if JWT_SECRET == INSECURE_DEFAULT_SECRET or len(JWT_SECRET) < 32:
+            raise RuntimeError("JWT_SECRET must be a unique value of at least 32 characters")

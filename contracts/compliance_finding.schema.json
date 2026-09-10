@@ -51,6 +51,20 @@
       "default": [],
       "description": "Device ids reachable from this finding's device via routing adjacency in the GraphRAG topology graph (app/graph_client.py), out to GRAPH_BLAST_RADIUS_MAX_HOPS. Added by app/evaluator.py, not the Rego rule — empty when the topology graph is unavailable or the device has no known routing neighbors."
     },
+    "source_lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["line", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "line": { "type": "integer", "minimum": 1 },
+          "text": { "type": "string" }
+        }
+      },
+      "default": [],
+      "description": "Sanitized configuration lines that support the verdict."
+    },
     "created_at": {
       "type": "string",
       "format": "date-time",

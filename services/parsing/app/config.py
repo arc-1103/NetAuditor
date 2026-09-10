@@ -13,7 +13,7 @@ class Settings:
     schema_package_version: str = os.getenv("SCHEMA_PACKAGE_VERSION", "1.0.0")
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.60"))
     chromadb_host: str = os.getenv("CHROMADB_HOST", "chromadb")
-    chromadb_port: int = int(os.getenv("CHROMADB_PORT", "8500"))
+    chromadb_port: int = int(os.getenv("CHROMADB_PORT", "8000"))
     max_chunk_lines: int = int(os.getenv("MAX_CHUNK_LINES", "500"))
     grammar_engine: str = os.getenv("GRAMMAR_ENGINE", "outlines")
     use_mock_slm: bool = _bool("USE_MOCK_SLM", True)

@@ -47,7 +47,7 @@ def test_evaluate_passes_audit_run_id_through_for_persistence(client, monkeypatc
 
     client.post("/evaluate", json={"baseline": baseline, "framework": "CIS", "audit_run_id": RUN_ID})
 
-    spy.assert_awaited_once_with(baseline, "CIS", RUN_ID)
+    spy.assert_awaited_once_with(baseline, "CIS", RUN_ID, source_text=None)
 
 
 def test_evaluate_without_audit_run_id_is_a_dry_run(client, monkeypatch, baseline):
@@ -56,7 +56,7 @@ def test_evaluate_without_audit_run_id_is_a_dry_run(client, monkeypatch, baselin
 
     client.post("/evaluate", json={"baseline": baseline})
 
-    spy.assert_awaited_once_with(baseline, None, None)
+    spy.assert_awaited_once_with(baseline, None, None, source_text=None)
 
 
 def test_evaluate_rejects_unknown_framework_with_400(client, monkeypatch, baseline):

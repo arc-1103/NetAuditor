@@ -1,32 +1,91 @@
-# NetAudit Engine — SIH 2026 (PS 26155)
+# NetAudit Engine
 
-AI-driven multi-vendor network security compliance auditor.
-See `docs/SIH26155_NetAudit_Architecture_Blueprint.md` for full architecture.
+Explainable, air-gap-ready network configuration compliance for SIH 26155.
 
-## Repo layout — start here
-- `TEAM_OWNERSHIP.md` — who owns which folder, work in parallel without collisions
-- `CONTRIBUTING.md` — local dev workflow, mock flags, branch naming
-- `contracts/` — cross-team API/schema shapes, agree here before you build
-- `services/*/.env.example` — copy to `.env` per service you're working on
-- `.env.example` (root) — infra-shared values only (Postgres, Redis, ports)
+NetAudit ingests raw network-device configuration, redacts secrets, identifies
+the platform, converts vendor syntax into a strict normalized security model,
+and evaluates that model with deterministic OPA policies. AI assists extraction;
+it never decides whether a control passes or fails.
 
-## Quick start (one lane, e.g. parsing)
+## Prototype capability
+
+| Capability | Current evidence |
+|---|---|
+| Upload, SHA-256 fingerprinting, MinIO storage | Implemented |
+| Schema-constrained local parsing | Deterministic mock and Ollama modes |
+| Compliance verdicts | 11-control CIS-style generic Level 1 prototype bundle |
+| Demonstrated vendors | Cisco IOS-XE and Fortinet FortiOS fixtures |
+| Deterministic remediation | Cisco and partial Fortinet Jinja2 templates |
+| Safety gate | Only `SAFE` preflight proposals can be approved |
+| Reporting | Browser preview, PDF, JSON and CEF |
+| Optional context | Learning queue, anomaly signal and topology blast radius |
+
+This repository does not claim CIS certification or complete CIS, NIST, STIG or
+ISO 27001 coverage. Official policy content and additional validated vendor
+adapters are expansion work.
+
+## Decision boundary
+
+```text
+Configuration → secret redaction → local AI extraction → Pydantic validation
+              → deterministic OPA verdict → preflighted remediation
+              → human approval → versioned evidence report
 ```
-cd services/parsing
-cp .env.example .env
-docker compose up parsing
+
+Low-confidence or invalid parsing becomes `NEEDS_REVIEW`; it is never displayed
+as compliant. AI-synthesized remediation is permanently marked `RISK_FLAGS` and
+cannot pass the normal approval gate.
+
+## Fast presentation setup
+
+Requirements: Docker Engine with Compose v2, at least 12 GB RAM for the complete
+local-model stack, and internet access during the first image/model pull.
+
+```bash
+./scripts/setup_demo.sh
+docker compose up --build -d
+python scripts/wait_for_stack.py
+python scripts/seed_admin.py
 ```
 
-## Quick start (full stack, integration day)
-```
-cp .env.example .env
-for d in services/*/; do cp "$d/.env.example" "$d/.env" 2>/dev/null; done
-cp frontend/.env.local.example frontend/.env.local
-docker compose up --build
-```
+Open `http://localhost:3000`, then upload `demo/cisco_insecure.cfg`.
+See `demo/DEMO_SCRIPT.md` for the four-minute narration and
+`docs/PRESENTATION_CLAIMS_CHECKLIST.md` for defensible wording.
 
-## Why per-service .env files instead of one root .env
-One shared `.env` means six people editing the same file = merge conflicts
-and silent cross-lane breakage. Each service declares only the vars it
-needs; root `.env` holds only what's genuinely shared infra (DB host,
-network name). See `CONTRIBUTING.md` for the full reasoning.
+Set `NEXT_PUBLIC_USE_MOCK_API=true` before building the frontend for the
+deterministic venue fallback. The dashboard labels fallback mode clearly.
+For a UI-only fallback that needs no backend, run `npm run demo` inside
+`frontend/`; any accepted configuration file opens the deterministic walkthrough.
+
+The default Compose startup is the presentation core. Optional topology,
+learning and local-model services can be included with
+`docker compose --profile advanced --profile model up --build -d`.
+
+## Repository map
+
+- `frontend/` — Next.js operations console
+- `gateway/` — authentication, authorization and API boundary
+- `services/ingestion/` — validation, redaction, storage and queue dispatch
+- `services/parsing/` and `services/schema/` — normalized extraction contract
+- `services/compliance/` — OPA policies, risk scoring and immutable evaluations
+- `services/learning/` — reviewed mappings and optional statistical context
+- `services/remediation/` — templates, preflight and approval gate
+- `services/reporting/` — HTML/PDF/JSON/CEF evidence
+- `demo/` and `benchmarks/` — presentation fixtures and measured validation
+
+## Verification
+
+GitHub Actions tests every lane independently, builds the locked frontend and
+runs static/demo gates. Before a live demo, also run `docker compose config` and
+the end-to-end smoke test on the presentation machine.
+
+## Security notes
+
+- Production startup rejects the known default JWT secret.
+- Dashboard roles are `admin`, `operator` and read-only `auditor`.
+- Uploaded files are bounded, MIME checked, credential-redacted and hashed.
+- Internal services live on an isolated network; only gateway/dashboard publish ports.
+- Every re-evaluation appends policy, schema, baseline and findings provenance.
+
+Review `docs/THREAT_MODEL.md` before deployment. This is a prototype engineering
+aid, not authorization to modify production devices.

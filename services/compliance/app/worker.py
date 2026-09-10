@@ -9,7 +9,8 @@ Payload (Parsing lane sends this once a baseline passes Pydantic validation):
     {
       "audit_run_id": "<uuid — the job_id Ingestion generated>",
       "framework":    "CIS",            # optional, defaults to DEFAULT_FRAMEWORK
-      "baseline":     { ... }           # contracts/security_baseline.schema.json
+      "baseline":     { ... },          # contracts/security_baseline.schema.json
+      "source_text":  "..."             # optional sanitized evidence
     }
 
 Parsing does not have to wait for this lane to be up — Celery queues the task.
@@ -41,7 +42,14 @@ def evaluate_baseline(job: dict) -> dict:
     if not isinstance(baseline, dict):
         raise ValueError("compliance.evaluate_baseline requires 'baseline' as an object")
 
-    result = asyncio.run(run_evaluation(baseline, job.get("framework"), audit_run_id))
+    result = asyncio.run(
+        run_evaluation(
+            baseline,
+            job.get("framework"),
+            audit_run_id,
+            source_text=job.get("source_text"),
+        )
+    )
     return result["summary"]
 
 
