@@ -29,6 +29,14 @@ class DeviceMetadata(StrictModel):
     config_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     parsing_confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     unknown_blocks_count: Annotated[int, Field(ge=0)] = 0
+    # Confidence ledger (see services/parsing/app/worker.py): the SLM's own
+    # signal on how sure it was about this extraction, surfaced verbatim
+    # instead of discarded once the accept/reject gate has used it. None
+    # when the model/mode never produced the signal (mock mode, an older
+    # Ollama without logprobs, or reverse-translation disabled/unavailable) —
+    # absence must read as "not measured", never as "measured and zero".
+    mean_logprob: float | None = None
+    reverse_translation_fidelity: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
 
 
 class AAAConfig(StrictModel):

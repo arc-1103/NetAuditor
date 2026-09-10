@@ -186,6 +186,7 @@ async def _parse_chunk(
             )
             raw_candidate = slm_result.value
             mean_logprob = slm_result.mean_logprob
+            fidelity: float | None = None
             candidate = normalize_candidate(raw_candidate)
 
             if mean_logprob is not None and mean_logprob < settings.logprob_uncertainty_threshold:
@@ -213,6 +214,12 @@ async def _parse_chunk(
                         ),
                         candidate=raw_candidate,
                     )
+
+            # Confidence ledger: record the gate signals themselves, not just
+            # their pass/fail verdict, so a viewer can see how sure the model
+            # was instead of only trusting the accept/reject outcome.
+            candidate["device"]["mean_logprob"] = mean_logprob
+            candidate["device"]["reverse_translation_fidelity"] = fidelity
 
             # Cache only a gate-passing candidate, pre-overlay (vendor/os/
             # hash are always re-applied fresh below, per job) — a failed
@@ -365,7 +372,7 @@ async def _process_config(
     }
 
     # Cross-lane communication remains Celery-only.
-    celery_app.send_task("compliance.evaluate_baseline", args=[compliance_payload])
+    celery_app.send_task("compliance.evaluate_baseline", args=[compliance_payload], queue="compliance")
 
     return {
         "status": "submitted",
@@ -444,8 +451,9 @@ def _dispatch_unknown_blocks(job_id: str, device_context: DeviceContext, unknown
                     "chunk_context": context,
                 }
             ],
+            queue="learning",
         )
 
 
 if __name__ == "__main__":
-    celery_app.worker_main(["worker", "--loglevel=info", "--concurrency=2"])
+    celery_app.worker_main(["worker", "--loglevel=info", "--concurrency=2", "-Q", "parsing"])

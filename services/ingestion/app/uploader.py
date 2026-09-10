@@ -16,6 +16,16 @@ ALLOWED_EXTENSIONS = os.getenv("ALLOWED_EXTENSIONS", ".cfg,.txt,.conf").split(",
 # behind an allowed extension.
 ALLOWED_MIME_TYPES = {"text/plain"}
 
+
+class DuplicateFileError(ValueError):
+    """Raised when a byte-identical file was already ingested. Carries the
+    hash so the caller can look up and reopen the existing audit run instead
+    of treating this as a hard failure — see app/main.py."""
+
+    def __init__(self, file_hash: str):
+        self.file_hash = file_hash
+        super().__init__(f"File already ingested (hash={file_hash})")
+
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
@@ -84,7 +94,7 @@ async def validate_and_store(file) -> dict:
     client = get_minio_client()
     try:
         client.stat_object(MINIO_BUCKET, object_name)
-        raise ValueError(f"File already ingested (hash={file_hash})")
+        raise DuplicateFileError(file_hash)
     except S3Error as e:
         if e.code != "NoSuchKey":
             raise

@@ -4,10 +4,10 @@ Run: uvicorn app.main:app --reload --port 8001
 """
 import uuid
 from fastapi import FastAPI, UploadFile, File, Header, HTTPException
-from app.uploader import validate_and_store
+from app.uploader import validate_and_store, DuplicateFileError
 from app.chunker import chunk_config
 from app.queue_producer import enqueue_parsing_job
-from app.db import create_audit_run
+from app.db import create_audit_run, get_audit_run_id_by_hash
 
 app = FastAPI(title="netaudit-ingestion")
 
@@ -28,6 +28,15 @@ async def upload_config(
     """
     try:
         stored = await validate_and_store(file)
+    except DuplicateFileError as e:
+        # Same bytes already ingested — reopen that audit run rather than
+        # dead-ending the upload. The response shape matches a fresh
+        # upload's, so callers (frontend's uploadConfig -> getAudit) need no
+        # special-casing.
+        existing_run_id = await get_audit_run_id_by_hash(e.file_hash)
+        if existing_run_id:
+            return {"job_id": existing_run_id, "status": "already_processed"}
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -11,3 +11,12 @@ node_modules/
 /data/
 .venv/
 graphify-out/
+infra/ollama/
+gateway/.python-version
+gateway/pyproject.toml
+scripts/.python-version
+scripts/pyproject.toml
+scripts/README.md
+scripts/uv.lock
+gateway/uv.lock
+docker-compose.override.yml

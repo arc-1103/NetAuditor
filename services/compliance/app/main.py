@@ -60,9 +60,27 @@ async def evaluate(body: EvaluateRequest):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+_UNEVALUATED_SUMMARY = {
+    "total_findings": 0,
+    "by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0},
+    "risk_score": 0,
+    "compliance_score": 0,
+    "controls_evaluated": 0,
+    "controls_failed": 0,
+    "controls_passed": 0,
+    "control_pass_rate": 0,
+}
+
+
 @app.get("/audit-runs/{run_id}")
 async def get_audit_run(run_id: str):
     run = await db.get_audit_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"No audit run {run_id}")
-    return {**run, "summary": summarize(run["findings"])}
+    # An empty findings list means "0 violations" only once evaluation has
+    # actually happened. Before that (INGESTED, NEEDS_REVIEW), summarize([])
+    # would read as a device that passed every check — summarize() has no
+    # way to tell "clean" from "never evaluated" apart, so gate on status
+    # here instead of inside it.
+    summary = summarize(run["findings"]) if run["status"] == db.STATUS_EVALUATED else _UNEVALUATED_SUMMARY
+    return {**run, "summary": summary}

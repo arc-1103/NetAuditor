@@ -2,7 +2,7 @@ import { mockAudit, mockRemediations } from "./mock";
 import type { AuditRun, Remediation } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-const QWEN_BASE = process.env.NEXT_PUBLIC_QWEN_BASE_URL || "http://localhost:11435";
+const QWEN_BASE = process.env.NEXT_PUBLIC_QWEN_BASE_URL || "http://localhost:11434";
 export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_API !== "false";
 
 export async function askLocalQwen(title: string, evidence: string): Promise<string> {
@@ -11,7 +11,7 @@ export async function askLocalQwen(title: string, evidence: string): Promise<str
     signal: AbortSignal.timeout(30_000),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "Qwen2.5-Coder-0.5B-Instruct",
+      model: "qwen2.5:7b-instruct-q4_K_M",
       temperature: 0,
       max_tokens: 100,
       messages: [
@@ -110,11 +110,16 @@ export async function generateReport(runId: string, token: string) {
   });
 }
 
+export async function getLearningQueue(token: string): Promise<{ items: any[] }> {
+  if (USE_MOCK) { await wait(300); return { items: [] }; }
+  return request<{ items: any[] }>("/api/learning/queue", token);
+}
+
 export function reportUrl(runId: string, kind: "download" | "preview" | "json" | "cef") {
   return `${API_BASE}/api/reports/${runId}/${kind}`;
 }
 
-export async function openProtectedReport(runId: string, token: string, kind: "download" | "preview") {
+export async function openProtectedReport(runId: string, token: string, kind: "download" | "preview" | "json" | "cef") {
   const response = await fetch(reportUrl(runId, kind), { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) throw new Error("The generated report could not be opened");
   const url = URL.createObjectURL(await response.blob());

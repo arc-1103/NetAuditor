@@ -31,7 +31,13 @@ export interface AuditRun {
   file_hash: string;
   status: string;
   created_at: string;
-  device?: { detected_vendor?: string; detected_os?: string; parsing_confidence?: number };
+  device?: {
+    detected_vendor?: string;
+    detected_os?: string;
+    parsing_confidence?: number;
+    mean_logprob?: number | null;
+    reverse_translation_fidelity?: number | null;
+  };
   findings: Finding[];
   summary: Summary;
   anomaly?: { status: string; is_anomaly?: boolean; anomaly_score?: number } | null;

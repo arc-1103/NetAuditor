@@ -54,4 +54,4 @@ def evaluate_baseline(job: dict) -> dict:
 
 
 if __name__ == "__main__":
-    celery_app.worker_main(["worker", "--loglevel=info", "--concurrency=4"])
+    celery_app.worker_main(["worker", "--loglevel=info", "--concurrency=4", "-Q", "compliance"])

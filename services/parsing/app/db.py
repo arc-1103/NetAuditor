@@ -17,12 +17,19 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from .config import settings
 
 STATUS_NEEDS_REVIEW = "NEEDS_REVIEW"
 
-engine = create_async_engine(settings.postgres_dsn, echo=False)
+# NullPool: this module is imported once, but each Celery task runs in its
+# own asyncio.run() call — a fresh event loop every time. A pooled
+# connection created on one loop and reused on the next raises "Future
+# attached to a different loop". NullPool opens a new connection per
+# checkout and closes it on release, so no connection ever crosses a loop
+# boundary.
+engine = create_async_engine(settings.postgres_dsn, echo=False, poolclass=NullPool)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

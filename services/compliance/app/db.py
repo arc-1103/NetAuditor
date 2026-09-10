@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN",
@@ -25,7 +26,11 @@ POSTGRES_DSN = os.getenv(
 STATUS_EVALUATED = "EVALUATED"
 POLICY_BUNDLE_VERSION = os.getenv("POLICY_BUNDLE_VERSION", "cis-generic-level1@1.0.0")
 
-engine = create_async_engine(POSTGRES_DSN, echo=False)
+# NullPool: this module is imported once, but each Celery task runs in its
+# own asyncio.run() call — a fresh event loop every time. A pooled
+# connection created on one loop and reused on the next raises "Future
+# attached to a different loop" / "another operation is in progress".
+engine = create_async_engine(POSTGRES_DSN, echo=False, poolclass=NullPool)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 _FINDING_COLUMNS = (
@@ -104,7 +109,9 @@ async def save_findings(
                         """
                         UPDATE audit_runs SET detected_vendor=:vendor, detected_os=:detected_os,
                             parsing_confidence=:confidence, schema_version=:schema_version,
-                            baseline_snapshot=:baseline WHERE id=:run_id
+                            baseline_snapshot=:baseline, mean_logprob=:mean_logprob,
+                            reverse_translation_fidelity=:reverse_translation_fidelity
+                            WHERE id=:run_id
                         """
                     ),
                     {
@@ -113,6 +120,8 @@ async def save_findings(
                         "confidence": device.get("parsing_confidence"),
                         "schema_version": baseline.get("schema_version"),
                         "baseline": canonical,
+                        "mean_logprob": device.get("mean_logprob"),
+                        "reverse_translation_fidelity": device.get("reverse_translation_fidelity"),
                         "run_id": audit_run_id,
                     },
                 )
@@ -181,6 +190,7 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
                     SELECT id, file_hash, original_filename, storage_path,
                            uploaded_by, status, status_detail, detected_vendor,
                            detected_os, parsing_confidence, schema_version,
+                           mean_logprob, reverse_translation_fidelity,
                            created_at, updated_at
                     FROM audit_runs WHERE id = :run_id
                     """
@@ -225,6 +235,8 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
         "detected_vendor": result.pop("detected_vendor", None),
         "detected_os": result.pop("detected_os", None),
         "parsing_confidence": result.pop("parsing_confidence", None),
+        "mean_logprob": result.pop("mean_logprob", None),
+        "reverse_translation_fidelity": result.pop("reverse_translation_fidelity", None),
     }
     return {
         **result,

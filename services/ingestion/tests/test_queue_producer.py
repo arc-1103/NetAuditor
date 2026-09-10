@@ -45,7 +45,7 @@ def test_dispatches_exactly_one_celery_task(fake_celery):
 
     job = queue_producer.enqueue_parsing_job("job-456", stored, [], "user-1")
 
-    fake_celery.send_task.assert_called_once_with("parsing.process_config", args=[job])
+    fake_celery.send_task.assert_called_once_with("parsing.process_config", args=[job], queue="parsing")
 
 
 def test_missing_uploader_falls_back_to_unknown_not_none(fake_celery):
