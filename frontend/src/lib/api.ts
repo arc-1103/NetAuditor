@@ -2,7 +2,30 @@ import { mockAudit, mockRemediations } from "./mock";
 import type { AuditRun, Remediation } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const QWEN_BASE = process.env.NEXT_PUBLIC_QWEN_BASE_URL || "http://localhost:11435";
 export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_API !== "false";
+
+export async function askLocalQwen(title: string, evidence: string): Promise<string> {
+  const response = await fetch(`${QWEN_BASE}/v1/chat/completions`, {
+    method: "POST",
+    signal: AbortSignal.timeout(30_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "Qwen2.5-Coder-0.5B-Instruct",
+      temperature: 0,
+      max_tokens: 100,
+      messages: [
+        { role: "system", content: "Explain network security findings in two short, non-technical sentences. Do not invent facts." },
+        { role: "user", content: `Finding: ${title}\nEvidence: ${evidence}` },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error("Local Qwen model is not available");
+  const body = await response.json();
+  const answer = body?.choices?.[0]?.message?.content;
+  if (typeof answer !== "string" || !answer.trim()) throw new Error("Qwen returned no explanation");
+  return answer.trim();
+}
 
 function wait(ms = 550) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,7 +98,13 @@ export async function approveRemediation(
 }
 
 export async function generateReport(runId: string, token: string) {
-  if (USE_MOCK) { await wait(650); return { download_url: "#mock-report", preview_url: "#mock-report" }; }
+  if (USE_MOCK) {
+    const report = { product: "NetAudit", mode: "deterministic presentation fallback", audit_run: runId, summary: mockAudit.summary, findings: mockAudit.findings };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+    window.open(url, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return { download_url: url, preview_url: url };
+  }
   return request<{ download_url: string; preview_url: string }>("/api/reports/generate", token, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audit_run_id: runId }),
   });

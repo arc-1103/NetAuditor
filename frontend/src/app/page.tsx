@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { approveRemediation, generateRemediations, generateReport, getAudit, login, openProtectedReport, uploadConfig, USE_MOCK } from "../lib/api";
+import { approveRemediation, askLocalQwen, generateRemediations, generateReport, getAudit, login, openProtectedReport, uploadConfig, USE_MOCK } from "../lib/api";
 import type { AuditRun, Finding, Remediation, Severity } from "../lib/types";
 
 const severityOrder: Severity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
@@ -60,11 +60,19 @@ function EvidenceLines({ finding }: { finding: Finding }) {
 function FindingPanel({ finding, remediation, onDecision, busy }: { finding: Finding; remediation?: Remediation; onDecision: (approved: boolean) => void; busy: boolean }) {
   const status = remediation?.preflight_status || remediation?.preflight?.status;
   const flags = remediation?.risk_flags || remediation?.preflight?.risk_flags || [];
+  const [qwenAnswer, setQwenAnswer] = useState("");
+  const [qwenStatus, setQwenStatus] = useState("");
+  async function explain() {
+    setQwenStatus("asking"); setQwenAnswer("");
+    try { setQwenAnswer(await askLocalQwen(finding.title, finding.evidence)); setQwenStatus("ready"); }
+    catch { setQwenStatus("error"); }
+  }
   return <aside className="drawer">
     <div className="drawer-head"><div><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><p>{finding.control_id} · {finding.framework}</p></div></div>
     <h2>{finding.title}</h2>
     <section><h3>What we found</h3><pre className="evidence">{finding.evidence}</pre><EvidenceLines finding={finding}/></section>
     <section><h3>Why this matters</h3><p className="muted">In simple terms, this setting may let an attacker reach or control the device more easily. A person must review every suggested fix before approval.</p>{finding.blast_radius?.length ? <p className="blast">Other devices that may be affected · {finding.blast_radius.join(" · ")}</p> : null}</section>
+    <section className="qwen-box"><div className="remediation-title"><h3>Live local AI</h3><span className={`model-state ${qwenStatus}`}>{qwenStatus === "ready" ? "QWEN LIVE" : "OPTIONAL"}</span></div><p className="muted">Ask locally running Qwen to explain this result in everyday language. It explains; fixed rules still decide.</p><button className="secondary" onClick={explain} disabled={qwenStatus === "asking"}>{qwenStatus === "asking" ? "Qwen is thinking…" : "Ask Qwen to explain"}</button>{qwenAnswer && <p className="ai-answer">{qwenAnswer}</p>}{qwenStatus === "error" && <p className="source">Local model unavailable. Start scripts/start_live_qwen.sh.</p>}</section>
     {!remediation ? <div className="empty-card"><p>No proposal generated yet.</p><span>Generate deterministic fixes for this audit from the toolbar.</span></div> : <section>
       <div className="remediation-title"><h3>Proposed remediation</h3><span className={`preflight ${(status || "unavailable").toLowerCase()}`}>{status || "UNKNOWN"}</span></div>
       {remediation.source === "agentic_rag" && <div className="alert error">AI-synthesized draft · cannot be directly approved</div>}
@@ -83,7 +91,11 @@ export default function Home() {
   const selectedRemediation = useMemo(() => remediations.find((item) => item.control_id === selected?.control_id), [remediations, selected]);
 
   async function handleFile(file?: File) {
-    if (!file) return; setBusy("upload"); setError(""); setNotice("Configuration accepted. Parsing and deterministic policy evaluation are running…");
+    if (!file) return;
+    const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (![".cfg", ".conf", ".txt"].includes(extension)) { setError("Choose a .cfg, .conf or .txt configuration file."); return; }
+    if (file.size > 10 * 1024 * 1024) { setError("Configuration files must be 10 MB or smaller."); return; }
+    setBusy("upload"); setError(""); setNotice("Configuration accepted. Parsing and deterministic policy evaluation are running…");
     try { const uploaded = await uploadConfig(file, token); const run = await getAudit(uploaded.job_id, token); setAudit({ ...run, original_filename: USE_MOCK ? file.name : run.original_filename }); setSelected(run.findings[0] || null); setNotice(run.status === "NEEDS_REVIEW" ? "No compliance verdict was issued: parsing evidence requires human review." : "Audit completed. Every verdict below was produced by version-controlled policy."); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Upload failed"); }
     finally { setBusy(""); }
@@ -116,7 +128,7 @@ export default function Home() {
       {!audit ? <section className="upload-stage"><div className="stage-copy"><p className="eyebrow">NEW ASSESSMENT</p><h2>Turn raw configuration into defensible evidence.</h2><p>Upload a Cisco or Fortinet text configuration. Secrets are redacted before immutable storage; compliance decisions remain deterministic.</p><div className="pipeline"><span>01<br/><b>Ingest</b></span><i/> <span>02<br/><b>Normalize</b></span><i/> <span>03<br/><b>Evaluate</b></span><i/> <span>04<br/><b>Remediate</b></span></div></div><label className={`dropzone ${dragging ? "dragging" : ""}`} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}><input type="file" accept=".cfg,.conf,.txt" onChange={(e) => handleFile(e.target.files?.[0])}/><span className="upload-icon">↥</span><strong>{busy === "upload" ? "Evaluating configuration…" : "Drop a configuration here"}</strong><p>or click to browse · .cfg, .conf, .txt · max 10 MB</p></label></section> : <>
         <section className="audit-head"><div><div className="status-line"><span className="status">{audit.status}</span><span>{audit.id}</span></div><h2>{audit.original_filename}</h2><div className="device-meta"><span>Vendor <b>{audit.device?.detected_vendor || "Detected"}</b></span><span>OS <b>{audit.device?.detected_os || "Unknown"}</b></span><span>Parse confidence <b>{Math.round((audit.device?.parsing_confidence || 0) * 100)}%</b></span><span>Policy <b>{audit.policy_bundle_version || "cis-generic-level1@1.0.0"}</b></span><span>SHA-256 <b>{audit.file_hash.slice(0, 12)}…</b></span></div></div><button className="primary" onClick={remediationAction} disabled={!!busy}>{busy === "remediation" ? "Preflighting…" : remediations.length ? "Regenerate fixes" : "Generate safe fixes"}</button></section>
         <section className="metrics"><div className="score-card"><ScoreRing value={audit.summary.control_pass_rate ?? audit.summary.compliance_score}/><div><p>Prototype checks passed</p><strong>{audit.summary.controls_passed ?? 0} of {audit.summary.controls_evaluated ?? 11} checks passed</strong><span>CIS-inspired demo rules · not a certification claim</span></div></div>{severityOrder.map((level) => <div className="metric" key={level}><span className={`dot ${level.toLowerCase()}`}/><p>{level}</p><strong>{audit.summary.by_severity[level] || 0}</strong></div>)}</section>
-        <section className="results-layout"><div className="findings"><div className="section-title"><div><p className="eyebrow">POLICY VERDICTS</p><h2>Findings</h2></div><span>{audit.findings.length} failed controls</span></div><div className="finding-list">{audit.findings.map((finding) => { const proposal = remediations.find((item) => item.control_id === finding.control_id); return <button key={finding.control_id} className={selected?.control_id === finding.control_id ? "selected" : ""} onClick={() => setSelected(finding)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><div><strong>{finding.title}</strong><p>{finding.control_id} · {finding.evidence}</p></div><span className="finding-state">{proposal?.approval_status === "APPROVED" ? "✓ APPROVED" : proposal ? (proposal.preflight_status || proposal.preflight?.status) : "REVIEW"}</span><b>›</b></button>; })}</div></div>{selected && <FindingPanel finding={selected} remediation={selectedRemediation} onDecision={decide} busy={busy === "decision"}/>}</section>
+        <section className="results-layout"><div className="findings"><div className="section-title"><div><p className="eyebrow">POLICY VERDICTS</p><h2>Findings</h2></div><span>{audit.findings.length} failed controls</span></div><div className="finding-list">{audit.findings.map((finding) => { const proposal = remediations.find((item) => item.control_id === finding.control_id); return <button key={finding.control_id} className={selected?.control_id === finding.control_id ? "selected" : ""} onClick={() => setSelected(finding)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><div><strong>{finding.title}</strong><p>{finding.control_id} · {finding.evidence}</p></div><span className="finding-state">{proposal?.approval_status === "APPROVED" ? "✓ APPROVED" : proposal ? (proposal.preflight_status || proposal.preflight?.status) : "REVIEW"}</span><b>›</b></button>; })}</div></div>{selected && <FindingPanel key={selected.control_id} finding={selected} remediation={selectedRemediation} onDecision={decide} busy={busy === "decision"}/>}</section>
       </>}
     </div>
   </main>;
