@@ -7,12 +7,21 @@ import os
 import httpx
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.responses import Response
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 from app.auth import get_current_user, authenticate_user, issue_token
 from app.db import get_session
 
 app = FastAPI(title="netaudit-gateway")
+CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8001")
 COMPLIANCE_URL = os.getenv("COMPLIANCE_URL", "http://compliance:8002")

@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
   audit-net:
     internal: true
@@ -7,16 +5,28 @@ networks:
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16.4
     env_file: .env
     networks: [audit-net]
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
   redis:
-    image: redis:7
+    image: redis:7.4.0-alpine
     networks: [audit-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
 
   minio:
     image: minio/minio
@@ -35,6 +45,9 @@ services:
   chromadb:
     image: chromadb/chroma
     networks: [audit-net]
+    volumes:
+      - chromadata:/chroma/chroma
+    restart: unless-stopped
 
   opa:
     image: openpolicyagent/opa:1.20.2
@@ -54,13 +67,37 @@ services:
   ollama:
     image: ollama/ollama
     networks: [audit-net]
+    volumes:
+      - ollamadata:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    restart: unless-stopped
+
+  # One-shot, idempotent model bootstrap. Pre-pull this before an air-gapped
+  # presentation; subsequent starts reuse the persistent ollamadata volume.
+  ollama-bootstrap:
+    image: ollama/ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama show \"$$OLLAMA_MODEL\" >/dev/null 2>&1 || ollama pull \"$$OLLAMA_MODEL\""]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks: [audit-net]
+    restart: "no"
+    profiles: ["model"]
 
   batfish:
     image: batfish/allinone
     networks: [audit-net]
 
   neo4j:
-    image: neo4j:5
+    image: neo4j:5.24.0
     # Not env_file: .env — the neo4j image maps every NEO4J_-prefixed var it
     # receives into neo4j.conf (NEO4J_HOST -> host, NEO4J_BOLT_PORT ->
     # bolt.port, ...) and refuses to start on a setting it doesn't
@@ -86,72 +123,147 @@ services:
   ingestion:
     build: ./services/ingestion
     env_file: ./services/ingestion/.env
-    depends_on: [redis, minio, postgres]
+    depends_on:
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     networks: [audit-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
   parsing:
     build:
       context: .
       dockerfile: services/parsing/Dockerfile
     env_file: ./services/parsing/.env
-    depends_on: [redis, ollama, chromadb, postgres]
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     networks: [audit-net]
+    restart: unless-stopped
 
   compliance:
     build: ./services/compliance
     env_file: ./services/compliance/.env
-    depends_on: [opa, postgres, redis, neo4j, learning]
+    depends_on:
+      opa: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      neo4j: {condition: service_healthy}
+      learning: {condition: service_healthy}
     networks: [audit-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
   compliance-worker:
     build: ./services/compliance
     env_file: ./services/compliance/.env
     command: python -m app.worker
-    depends_on: [opa, postgres, redis, neo4j, learning]
+    depends_on:
+      opa: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      neo4j: {condition: service_healthy}
+      learning: {condition: service_healthy}
     networks: [audit-net]
+    restart: unless-stopped
 
   learning:
     build: ./services/learning/backend
     env_file: ./services/learning/.env
-    depends_on: [chromadb, postgres]
+    depends_on:
+      postgres: {condition: service_healthy}
     networks: [audit-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    restart: unless-stopped
 
   learning-worker:
     build: ./services/learning/backend
     env_file: ./services/learning/.env
     command: python -m app.unknown_handler
-    depends_on: [redis, postgres]
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     networks: [audit-net]
+    restart: unless-stopped
 
   remediation:
     build: ./services/remediation
     env_file: ./services/remediation/.env
-    depends_on: [batfish, postgres, ollama, learning]
+    depends_on:
+      postgres: {condition: service_healthy}
+      learning: {condition: service_healthy}
     networks: [audit-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
   reporting:
     build: ./services/reporting
     env_file: ./services/reporting/.env
-    depends_on: [postgres]
+    depends_on:
+      postgres: {condition: service_healthy}
     volumes:
       - reportdata:/data/reports
     networks: [audit-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
   gateway:
     build: ./gateway
     env_file: ./gateway/.env
-    depends_on: [ingestion, compliance, learning, remediation, reporting]
+    depends_on:
+      ingestion: {condition: service_healthy}
+      compliance: {condition: service_healthy}
+      learning: {condition: service_healthy}
+      remediation: {condition: service_healthy}
+      reporting: {condition: service_healthy}
     networks: [audit-net]
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
   frontend:
-    build: ./frontend
-    depends_on: [gateway]
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_USE_MOCK_API: ${NEXT_PUBLIC_USE_MOCK_API:-false}
+    depends_on:
+      gateway: {condition: service_healthy}
     networks: [audit-net]
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    restart: unless-stopped
 
 volumes:
   pgdata:
   miniodata:
   reportdata:
   neo4jdata:
+  chromadata:
+  ollamadata:
