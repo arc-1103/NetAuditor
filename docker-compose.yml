@@ -70,7 +70,7 @@ services:
     profiles: ["model"]
     networks: [audit-net]
     volumes:
-      - ollamadata:/root/.ollama
+      - ./infra/ollama:/root/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -266,4 +266,3 @@ volumes:
   reportdata:
   neo4jdata:
   chromadata:
-  ollamadata:

@@ -119,4 +119,5 @@ async def test_real_worker_pipeline_output_matches_actual_cross_lane_contract(mo
         "audit_run_id": job["job_id"],
         "framework": "CIS",
         "baseline": baseline,
-    }], {})]
+        "source_text": "\n".join(chunk["text"] for chunk in job["chunks"]),
+    }], {"queue": "compliance"})]

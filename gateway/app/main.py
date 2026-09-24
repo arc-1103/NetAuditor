@@ -39,12 +39,12 @@ app.add_middleware(
 
 class OperationalMiddleware:
     """Pure ASGI request IDs, access logging and bounded per-client rate limiting."""
-    def __init__(self, application):
-        self.application = application
+    def __init__(self, app):
+        self.app = app
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
-            return await self.application(scope, receive, send)
+            return await self.app(scope, receive, send)
         headers = dict(scope.get("headers", []))
         request_id = headers.get(b"x-request-id", str(uuid.uuid4()).encode()).decode(errors="replace")
         path = scope.get("path", "")
@@ -70,7 +70,7 @@ class OperationalMiddleware:
             await send(message)
 
         try:
-            await self.application(scope, receive, send_with_context)
+            await self.app(scope, receive, send_with_context)
         finally:
             logger.info(json.dumps({"request_id": request_id, "method": scope.get("method"), "path": path, "status": status, "duration_ms": round((time.monotonic() - started) * 1000, 2)}))
 

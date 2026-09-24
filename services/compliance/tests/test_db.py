@@ -48,6 +48,8 @@ async def sqlite_session(monkeypatch):
                     parsing_confidence REAL,
                     schema_version    TEXT,
                     baseline_snapshot TEXT,
+                    mean_logprob      REAL,
+                    reverse_translation_fidelity REAL,
                     created_at        TEXT,
                     updated_at        TEXT
                 )

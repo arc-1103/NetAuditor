@@ -17,7 +17,6 @@ PATTERNS = [
             r"(?im)^\s*version\s+\d+\.\d+",
             r"(?im)^\s*service\s+timestamps\s+debug",
             r"(?im)^\s*ip\s+ssh\s+version\s+2",
-            r"(?im)^\s*line\s+vty\s+\d+",
         ),
     ),
     (

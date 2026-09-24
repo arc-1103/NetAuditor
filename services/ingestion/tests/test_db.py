@@ -23,7 +23,8 @@ async def sqlite_session(monkeypatch):
                     original_filename TEXT,
                     storage_path      TEXT NOT NULL,
                     uploaded_by       TEXT,
-                    status            TEXT NOT NULL DEFAULT 'INGESTED'
+                    status            TEXT NOT NULL DEFAULT 'INGESTED',
+                    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
@@ -68,12 +69,12 @@ async def test_create_audit_run_allows_missing_uploader(sqlite_session):
     assert row["uploaded_by"] is None
 
 
-async def test_audit_run_exists_for_hash_true_after_insert(sqlite_session):
+async def test_get_audit_run_id_by_hash_returns_the_run_after_insert(sqlite_session):
     stored = {"file_hash": "g" * 64, "storage_path": "raw-configs/ggg.cfg", "original_filename": "device.cfg"}
     await db.create_audit_run("run-3", stored, None)
 
-    assert await db.audit_run_exists_for_hash("g" * 64) is True
+    assert await db.get_audit_run_id_by_hash("g" * 64) == "run-3"
 
 
-async def test_audit_run_exists_for_hash_false_when_absent(sqlite_session):
-    assert await db.audit_run_exists_for_hash("h" * 64) is False
+async def test_get_audit_run_id_by_hash_returns_none_when_absent(sqlite_session):
+    assert await db.get_audit_run_id_by_hash("h" * 64) is None

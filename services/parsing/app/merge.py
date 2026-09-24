@@ -46,6 +46,21 @@ def merge_baselines(
         b.device.unknown_blocks_count for b in baselines
     )
 
+    # Confidence ledger: surface the weakest signal across chunks, same
+    # "worst case wins" philosophy as parsing_confidence above — a device
+    # is only as trustworthy as its least-confident chunk. None when no
+    # chunk measured the signal at all (mock mode, older Ollama, reverse
+    # translation disabled), never coerced to 0 — that would misreport
+    # "unmeasured" as "measured and terrible".
+    logprobs = [b.device.mean_logprob for b in baselines if b.device.mean_logprob is not None]
+    merged["device"]["mean_logprob"] = min(logprobs) if logprobs else None
+    fidelities = [
+        b.device.reverse_translation_fidelity
+        for b in baselines
+        if b.device.reverse_translation_fidelity is not None
+    ]
+    merged["device"]["reverse_translation_fidelity"] = min(fidelities) if fidelities else None
+
     return SecurityBaseline.model_validate(merged), conflicts
 
 

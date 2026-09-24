@@ -7,7 +7,7 @@ from fastapi import FastAPI, UploadFile, File, Header, HTTPException
 from app.uploader import validate_and_store
 from app.chunker import chunk_config
 from app.queue_producer import enqueue_parsing_job
-from app.db import create_audit_run, audit_run_exists_for_hash
+from app.db import create_audit_run, get_audit_run_id_by_hash
 
 app = FastAPI(title="netaudit-ingestion")
 
@@ -31,8 +31,17 @@ async def upload_config(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    if await audit_run_exists_for_hash(stored["file_hash"]):
-        raise HTTPException(status_code=400, detail=f"File already ingested (hash={stored['file_hash']})")
+    # Postgres, not MinIO, is the dedup authority: validate_and_store always
+    # (re)writes the content-addressed object, so a prior partial failure
+    # (MinIO succeeded, this check never ran) leaves no audit_runs row and
+    # self-heals here instead of permanently rejecting every retry. Same
+    # bytes that WERE already fully ingested reopen that audit run rather
+    # than dead-ending the upload — the response shape matches a fresh
+    # upload's, so callers (frontend's uploadConfig -> getAudit) need no
+    # special-casing.
+    existing_run_id = await get_audit_run_id_by_hash(stored["file_hash"])
+    if existing_run_id:
+        return {"job_id": existing_run_id, "status": "already_processed"}
 
     # Gateway forwards the JWT subject as X-User-Id; this hop itself is
     # unauthenticated (internal network), so a missing/malformed header

@@ -21,5 +21,5 @@ def enqueue_parsing_job(job_id: str, stored: dict, chunks: list[str], uploaded_b
         "chunk_count": len(chunks),
         "chunks": [{"index": i, "text": c} for i, c in enumerate(chunks)],
     }
-    celery_app.send_task("parsing.process_config", args=[job])
+    celery_app.send_task("parsing.process_config", args=[job], queue="parsing")
     return job

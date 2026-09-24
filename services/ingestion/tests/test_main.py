@@ -33,7 +33,7 @@ def test_upload_happy_path_returns_queued_job(client, monkeypatch):
     }
     create_audit_run_mock = AsyncMock()
     monkeypatch.setattr("app.main.validate_and_store", AsyncMock(return_value=stored))
-    monkeypatch.setattr("app.main.audit_run_exists_for_hash", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.main.get_audit_run_id_by_hash", AsyncMock(return_value=None))
     monkeypatch.setattr("app.main.create_audit_run", create_audit_run_mock)
     monkeypatch.setattr(
         "app.main.enqueue_parsing_job",
@@ -70,9 +70,11 @@ def test_upload_rejects_invalid_file_with_400(client, monkeypatch):
     assert "not allowed" in resp.json()["detail"]
 
 
-def test_upload_rejects_already_ingested_hash_with_400(client, monkeypatch):
+def test_upload_reopens_the_existing_run_for_an_already_ingested_hash(client, monkeypatch):
     # Dedup must be checked against Postgres (the audit_runs table), not
     # MinIO — that's the only source of truth for a *successful* ingestion.
+    # A genuine re-upload of already-ingested bytes reopens that run rather
+    # than erroring, so a legitimate retry always succeeds.
     stored = {
         "file_hash": "a" * 64,
         "storage_path": "raw-configs/aaa.cfg",
@@ -81,13 +83,14 @@ def test_upload_rejects_already_ingested_hash_with_400(client, monkeypatch):
     }
     create_audit_run_mock = AsyncMock()
     monkeypatch.setattr("app.main.validate_and_store", AsyncMock(return_value=stored))
-    monkeypatch.setattr("app.main.audit_run_exists_for_hash", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.main.get_audit_run_id_by_hash", AsyncMock(return_value="existing-run-1"))
     monkeypatch.setattr("app.main.create_audit_run", create_audit_run_mock)
 
     resp = client.post("/upload", files={"file": ("device.cfg", b"hostname r1\n", "text/plain")})
 
-    assert resp.status_code == 400
-    assert "already ingested" in resp.json()["detail"]
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"job_id": "existing-run-1", "status": "already_processed"}
     create_audit_run_mock.assert_not_called()
 
 
@@ -100,7 +103,7 @@ def test_upload_without_user_header_stores_no_attribution(client, monkeypatch):
     }
     create_audit_run_mock = AsyncMock()
     monkeypatch.setattr("app.main.validate_and_store", AsyncMock(return_value=stored))
-    monkeypatch.setattr("app.main.audit_run_exists_for_hash", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.main.get_audit_run_id_by_hash", AsyncMock(return_value=None))
     monkeypatch.setattr("app.main.create_audit_run", create_audit_run_mock)
     monkeypatch.setattr(
         "app.main.enqueue_parsing_job",
@@ -123,7 +126,7 @@ def test_upload_with_malformed_user_header_degrades_gracefully(client, monkeypat
     }
     create_audit_run_mock = AsyncMock()
     monkeypatch.setattr("app.main.validate_and_store", AsyncMock(return_value=stored))
-    monkeypatch.setattr("app.main.audit_run_exists_for_hash", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.main.get_audit_run_id_by_hash", AsyncMock(return_value=None))
     monkeypatch.setattr("app.main.create_audit_run", create_audit_run_mock)
     monkeypatch.setattr(
         "app.main.enqueue_parsing_job",

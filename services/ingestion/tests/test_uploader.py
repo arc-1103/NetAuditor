@@ -121,7 +121,7 @@ async def test_stores_new_file_and_redacts_credentials(fake_minio):
 
 
 async def test_rewrites_already_stored_object_instead_of_rejecting(monkeypatch):
-    # Dedup is now Postgres's job (see app.db.audit_run_exists_for_hash),
+    # Dedup is now Postgres's job (see app.db.get_audit_run_id_by_hash),
     # checked by the caller before create_audit_run. validate_and_store
     # itself must always (re)write the content-addressed object in MinIO,
     # even if that hash already exists there — otherwise a partial failure

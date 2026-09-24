@@ -6,6 +6,8 @@
 2. Keep `NEXT_PUBLIC_USE_MOCK_API=false` for the real run.
 3. Open a second browser tab with mock mode as the offline fallback.
 4. Generate and retain one backup PDF before presenting.
+5. Start `./scripts/start_live_qwen.sh`; click “Ask Qwen to explain” once before
+   the presentation to warm the real local model.
 
 ## Narration
 
@@ -22,6 +24,10 @@ makes the reproducible verdict.”
 
 **1:25 — Findings.** Open Telnet, SNMP and IKE findings. Show the control,
 severity, normalized evidence and original source line.
+
+Click **Ask Qwen to explain**. “This response is being generated now by a real
+local Qwen model. Notice that AI explains the result; our fixed policy issued
+the verdict.”
 
 **2:05 — Safe remediation.** Generate proposals. Approve the deterministic SSH
 template. Then open the SNMP proposal and show that site-specific placeholders

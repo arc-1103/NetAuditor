@@ -82,5 +82,13 @@ async def get_audit_run(run_id: str):
     run = await db.get_audit_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"No audit run {run_id}")
-    summary = summarize(run["findings"]) if run["status"] in {"EVALUATED", "COMPLETE"} else _NOT_EVALUATED_SUMMARY
+    # An empty findings list means "0 violations" only once evaluation has
+    # actually happened. Before that (INGESTED, NEEDS_REVIEW), summarize([])
+    # would read as a device that passed every check — summarize() has no
+    # way to tell "clean" from "never evaluated" apart, so gate on status
+    # here instead of inside it. COMPLETE (report generated) still has real,
+    # trustworthy findings from its earlier evaluation — only EVALUATED and
+    # COMPLETE runs get a real summary.
+    is_evaluated = run["status"] in {db.STATUS_EVALUATED, "COMPLETE"}
+    summary = summarize(run["findings"]) if is_evaluated else _NOT_EVALUATED_SUMMARY
     return {**run, "summary": summary}

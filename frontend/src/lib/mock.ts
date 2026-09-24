@@ -22,7 +22,7 @@ export const mockAudit: AuditRun = {
   file_hash: "0e4038c51f2b20cd788477fa8715c705c64ab481ea232c3522b95a89e6bda191",
   status: "EVALUATED",
   created_at: "2026-09-10T09:12:42Z",
-  device: { detected_vendor: "cisco", detected_os: "IOS-XE", parsing_confidence: 0.96 },
+  device: { detected_vendor: "cisco", detected_os: "IOS-XE", parsing_confidence: 0.96, mean_logprob: -0.18, reverse_translation_fidelity: 0.91 },
   findings,
   summary: { total_findings: findings.length, by_severity: severityCounts, risk_score: 165, compliance_score: 0, controls_evaluated: 11, controls_failed: 6, controls_passed: 5, control_pass_rate: 45 },
   anomaly: { status: "insufficient_peers" },

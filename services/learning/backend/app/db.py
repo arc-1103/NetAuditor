@@ -10,13 +10,17 @@ import os
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN",
     "postgresql+asyncpg://netaudit:changeme_in_local_env@postgres:5432/netaudit",
 )
 
-engine = create_async_engine(POSTGRES_DSN, echo=False)
+# NullPool: unknown_handler.py's Celery task runs asyncio.run() per task — a
+# fresh event loop every time. A pooled connection from one loop reused on
+# the next raises "Future attached to a different loop".
+engine = create_async_engine(POSTGRES_DSN, echo=False, poolclass=NullPool)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

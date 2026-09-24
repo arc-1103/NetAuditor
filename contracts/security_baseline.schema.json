@@ -26,7 +26,17 @@
           "maximum": 1.0,
           "description": "Blueprint §4.1: below 0.60 the baseline goes to human review, not to Compliance."
         },
-        "unknown_blocks_count": { "type": "integer", "minimum": 0, "default": 0 }
+        "unknown_blocks_count": { "type": "integer", "minimum": 0, "default": 0 },
+        "mean_logprob": {
+          "type": ["number", "null"],
+          "description": "Mean per-token log-probability Ollama reported for this extraction, or null when unmeasured (mock mode, no logprob support). Below LOGPROB_UNCERTAINTY_THRESHOLD routes the chunk to human review instead of publishing it — see services/parsing/app/worker.py."
+        },
+        "reverse_translation_fidelity": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "How well a second SLM call's CLI reconstruction from this baseline matched the original config, or null when reverse-translation is disabled/unavailable. Below REVERSE_TRANSLATION_FIDELITY_THRESHOLD routes the chunk to human review — see services/parsing/app/reverse_translation.py."
+        }
       }
     },
     "aaa": {

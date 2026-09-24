@@ -57,6 +57,12 @@ deterministic venue fallback. The dashboard labels fallback mode clearly.
 For a UI-only fallback that needs no backend, run `npm run demo` inside
 `frontend/`; any accepted configuration file opens the deterministic walkthrough.
 
+To add a genuine local Qwen explanation to that reliable walkthrough, start
+`./scripts/start_live_qwen.sh` in a second terminal. The first run downloads the
+official Qwen2.5-Coder 0.5B GGUF model; the findings drawer then exposes an
+“Ask Qwen to explain” button. Qwen explains the deterministic finding but does
+not make or alter the compliance verdict.
+
 The default Compose startup is the presentation core. Optional topology,
 learning and local-model services can be included with
 `docker compose --profile advanced --profile model up --build -d`.
