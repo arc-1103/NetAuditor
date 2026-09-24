@@ -36,3 +36,12 @@ async def create_audit_run(run_id: str, stored: dict, uploaded_by: str | None) -
             },
         )
         await session.commit()
+
+
+async def audit_run_exists_for_hash(file_hash: str) -> bool:
+    async with async_session() as session:
+        result = await session.execute(
+            text("SELECT 1 FROM audit_runs WHERE file_hash = :file_hash LIMIT 1"),
+            {"file_hash": file_hash},
+        )
+        return result.first() is not None

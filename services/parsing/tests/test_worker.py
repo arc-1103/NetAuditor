@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from dataclasses import replace
 from unittest.mock import AsyncMock
@@ -258,6 +259,27 @@ async def test_missing_mean_logprob_does_not_trigger_the_uncertainty_gate(monkey
 
 def test_task_name():
     assert worker.process_config.name == "parsing.process_config"
+
+
+def test_worker_reuses_one_event_loop_across_tasks(monkeypatch):
+    """asyncio.run() opens a fresh loop and closes it on every call, which
+    breaks the module-level asyncpg pool on the second task in a worker
+    process (its connections stay bound to the first, now-closed loop). _run
+    must actually execute every task on the same persistent loop instead."""
+    seen_loops = []
+
+    async def fake_process_config(*args, **kwargs):
+        seen_loops.append(asyncio.get_running_loop())
+        return {"status": "ok"}
+
+    monkeypatch.setattr(worker, "_process_config", fake_process_config)
+
+    worker.process_config({"job_id": "x"})
+    worker.process_config({"job_id": "x"})
+
+    assert len(seen_loops) == 2
+    assert seen_loops[0] is seen_loops[1] is worker._loop
+    assert not worker._loop.is_closed()
 
 
 @pytest.mark.asyncio

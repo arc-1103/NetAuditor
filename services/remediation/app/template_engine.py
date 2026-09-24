@@ -32,6 +32,9 @@ def render_template(template_name: str, context: dict[str, Any] | None = None) -
     """Render only a direct .j2 filename from the configured template directory."""
     if Path(template_name).name != template_name or not template_name.endswith(".j2"):
         raise RemediationTemplateError("Invalid remediation template name")
+    for key, value in (context or {}).items():
+        if isinstance(value, str) and ("\n" in value or "\r" in value):
+            raise RemediationTemplateError(f"Template variable {key!r} must not contain newlines")
     try:
         template = _environment().get_template(template_name)
         rendered = template.render(**(context or {})).strip()

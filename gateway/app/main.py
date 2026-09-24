@@ -112,6 +112,8 @@ class LearningMapRequest(BaseModel):
     cli_pattern: str
     field: str
     value: str
+    vendor: str = "unknown"
+    os: str | None = None
 
 
 class RemediationApproveRequest(BaseModel):

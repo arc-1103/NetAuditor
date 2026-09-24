@@ -5,6 +5,7 @@ that a malformed job from the Parsing lane fails loudly instead of writing a
 "zero findings" verdict.
 """
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -55,3 +56,24 @@ def test_task_rejects_a_job_without_a_baseline():
 def test_task_rejects_a_non_object_baseline():
     with pytest.raises(ValueError, match="baseline"):
         worker.evaluate_baseline({"audit_run_id": RUN_ID, "baseline": "not-a-dict"})
+
+
+def test_worker_reuses_one_event_loop_across_tasks(monkeypatch):
+    """asyncio.run() opens a fresh loop and closes it on every call, which
+    breaks the module-level asyncpg pool on the second task in a worker
+    process (its connections stay bound to the first, now-closed loop). _run
+    must actually execute every task on the same persistent loop instead."""
+    seen_loops = []
+
+    async def fake_run_evaluation(*args, **kwargs):
+        seen_loops.append(asyncio.get_running_loop())
+        return {"summary": {}}
+
+    monkeypatch.setattr(worker, "run_evaluation", fake_run_evaluation)
+
+    worker.evaluate_baseline({"audit_run_id": RUN_ID, "baseline": BASELINE})
+    worker.evaluate_baseline({"audit_run_id": RUN_ID, "baseline": BASELINE})
+
+    assert len(seen_loops) == 2
+    assert seen_loops[0] is seen_loops[1] is worker._loop
+    assert not worker._loop.is_closed()

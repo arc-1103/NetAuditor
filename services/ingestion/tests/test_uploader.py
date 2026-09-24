@@ -120,20 +120,56 @@ async def test_stores_new_file_and_redacts_credentials(fake_minio):
     assert b"verysecrethash" not in written
 
 
-async def test_rejects_duplicate_upload(monkeypatch):
+async def test_rewrites_already_stored_object_instead_of_rejecting(monkeypatch):
+    # Dedup is now Postgres's job (see app.db.audit_run_exists_for_hash),
+    # checked by the caller before create_audit_run. validate_and_store
+    # itself must always (re)write the content-addressed object in MinIO,
+    # even if that hash already exists there — otherwise a partial failure
+    # after a first successful write (DB/queue down) would permanently
+    # brick retries of the exact same file.
     raw = b"hostname router1\ninterface Gi0/1\n"
     file_hash = hashlib.sha256(raw).hexdigest()
     client = make_fake_minio_client(existing_hash=file_hash)
     monkeypatch.setattr(uploader, "get_minio_client", lambda: client)
     file = FakeUploadFile("device.cfg", raw)
 
-    with pytest.raises(ValueError, match="already ingested"):
-        await uploader.validate_and_store(file)
+    result = await uploader.validate_and_store(file)
 
-    client.put_object.assert_not_called()
+    assert result["file_hash"] == file_hash
+    client.put_object.assert_called_once()
 
 
 def test_redact_credentials_leaves_unrelated_lines_untouched():
     text = "hostname router1\ninterface Gi0/1\n description uplink to core\n"
 
     assert uploader.redact_credentials(text) == text
+
+
+def test_redact_credentials_leaves_default_snmp_communities_visible():
+    # "public"/"private" are well-known defaults, not secrets. Compliance
+    # check CIS-NET-1.2.2 detects devices still using them — redacting
+    # them here would destroy the only evidence that check needs.
+    text = (
+        "snmp-server community public RO\n"
+        "snmp-server host 10.20.10.12 version 2c public\n"
+    )
+
+    redacted = uploader.redact_credentials(text)
+
+    assert redacted == text
+    assert "[REDACTED]" not in redacted
+
+
+def test_redact_credentials_redacts_custom_snmp_community_everywhere():
+    # A non-default community is a real secret and is reused as the
+    # implicit auth token on `snmp-server host` lines, so it must be
+    # redacted on both lines, not just the `community` line.
+    text = (
+        "snmp-server community s3cr3t-str1ng RO\n"
+        "snmp-server host 10.1.1.1 version 2c s3cr3t-str1ng\n"
+    )
+
+    redacted = uploader.redact_credentials(text)
+
+    assert "s3cr3t-str1ng" not in redacted
+    assert redacted.count("[REDACTED]") == 2

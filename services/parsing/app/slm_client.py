@@ -225,15 +225,27 @@ class OllamaSLMClient:
         elif re.search(r"(?im)^\s*transport\s+input\s+telnet\b", text):
             result["telnet"] = {"enabled": "ENABLED"}
             fields_found += 1
+        elif re.search(r"(?im)^\s*set\s+admin-telnet\s+disable\b", text):
+            result["telnet"] = {"enabled": "DISABLED"}
+            fields_found += 1
+        elif re.search(r"(?im)^\s*set\s+admin-telnet\s+enable\b", text):
+            result["telnet"] = {"enabled": "ENABLED"}
+            fields_found += 1
 
         if re.search(r"(?im)^\s*service\s+password-encryption\b", text):
             result["aaa"] = {"password_encryption": "ENABLED"}
+            fields_found += 1
+        elif re.search(r"(?im)^\s*no\s+service\s+password-encryption\b", text):
+            result["aaa"] = {"password_encryption": "DISABLED"}
             fields_found += 1
 
         if re.search(r"(?im)^\s*no\s+ip\s+http\s+server\b", text):
             result["services"] = {"http_server_enabled": "DISABLED"}
             fields_found += 1
         elif re.search(r"(?im)^\s*ip\s+http\s+server\b", text):
+            result["services"] = {"http_server_enabled": "ENABLED"}
+            fields_found += 1
+        elif re.search(r"(?im)^\s*set\s+allowaccess\s+.*\bhttp\b", text):
             result["services"] = {"http_server_enabled": "ENABLED"}
             fields_found += 1
 
@@ -251,6 +263,36 @@ class OllamaSLMClient:
 
         if re.search(r"(?im)^\s*banner\s+login\b", text):
             result["banners"] = {"login_banner_present": True}
+            fields_found += 1
+
+        snmp_communities: list[str] = re.findall(r"(?im)^\s*snmp-server\s+community\s+(\S+)", text)
+        snmp_block = re.search(r"(?is)config\s+system\s+snmp\s+community\b(.*?)\bend\b", text)
+        if snmp_block:
+            snmp_communities += re.findall(r'(?im)^\s*set\s+name\s+"([^"]+)"', snmp_block.group(1))
+        if snmp_communities:
+            result["snmp"] = {"enabled": True, "community_strings": snmp_communities}
+            fields_found += 1
+
+        ike_policies: list[dict[str, Any]] = []
+        for block in re.finditer(r"(?im)^crypto\s+isakmp\s+policy\s+(\d+)\s*\n((?:^[ \t]+.*\n?)*)", text):
+            enc_match = re.search(r"(?im)^\s*encryption\s+(\S+)", block.group(2))
+            mapped = _map_encryption(enc_match.group(1)) if enc_match else None
+            if mapped:
+                ike_policies.append({"policy_id": int(block.group(1)), "encryption": mapped})
+
+        fortios_ike = re.search(r"(?is)config\s+vpn\s+ipsec\s+phase1-interface\b(.*?)\bend\b", text)
+        if fortios_ike:
+            proposal = re.search(r"(?im)^\s*set\s+proposal\s+(.+)$", fortios_ike.group(1))
+            if proposal:
+                seen: set[str] = set()
+                for token in proposal.group(1).split():
+                    mapped = _map_encryption(token.split("-")[0])
+                    if mapped and mapped not in seen:
+                        seen.add(mapped)
+                        ike_policies.append({"policy_id": None, "encryption": mapped})
+
+        if ike_policies:
+            result["crypto"] = {"ike_policies": ike_policies}
             fields_found += 1
 
         # Topology facts for GraphRAG (services/compliance/app/graph_client.py).
@@ -277,6 +319,10 @@ class OllamaSLMClient:
 def _first_match(text: str, pattern: str) -> str | None:
     match = re.search(pattern, text)
     return match.group(1) if match else None
+
+
+def _map_encryption(token: str) -> str | None:
+    return {"des": "DES", "3des": "3DES"}.get(token.lower())
 
 
 def _extract_topology(text: str) -> dict[str, Any]:

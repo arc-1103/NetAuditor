@@ -17,6 +17,23 @@ from app.risk_scorer import summarize
 
 app = FastAPI(title="netaudit-compliance")
 
+# A run only has trustworthy findings once it's actually been evaluated —
+# for any other status (INGESTED, NEEDS_REVIEW, ...) findings is empty
+# because evaluation never ran, not because the device is clean.
+# summarize([]) would otherwise report a fabricated 100/100 for a
+# never-audited run. compliance_score/control_pass_rate are None here so
+# the frontend can tell "not scored" apart from "scored 0" or "scored 100".
+_NOT_EVALUATED_SUMMARY = {
+    "total_findings": 0,
+    "by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0},
+    "risk_score": 0,
+    "compliance_score": None,
+    "controls_evaluated": 0,
+    "controls_failed": 0,
+    "controls_passed": 0,
+    "control_pass_rate": None,
+}
+
 
 @app.on_event("shutdown")
 async def _close_graph_provider() -> None:
@@ -65,4 +82,5 @@ async def get_audit_run(run_id: str):
     run = await db.get_audit_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"No audit run {run_id}")
-    return {**run, "summary": summarize(run["findings"])}
+    summary = summarize(run["findings"]) if run["status"] in {"EVALUATED", "COMPLETE"} else _NOT_EVALUATED_SUMMARY
+    return {**run, "summary": summary}

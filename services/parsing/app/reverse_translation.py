@@ -33,6 +33,13 @@ _DEVICE_FIELDS_EXCLUDED_FROM_FIDELITY = {
     "unknown_blocks_count",
 }
 
+# GraphRAG topology (slm_client.py's _extract_topology) is a top-level key,
+# not a device.* leaf, and is out of scope the same way: it feeds
+# blast-radius tracing, not the security baseline, and Agent B never
+# reconstructs "interface ..." blocks from it, so a round trip always
+# "loses" it whether or not Agent A's extraction was faithful.
+_TOP_LEVEL_KEYS_EXCLUDED_FROM_FIDELITY = {"topology"}
+
 
 # "Not observed" sentinels across the schema's enums (ProtocolStatus.UNKNOWN,
 # SSHVersion.NONE, SNMPVersion.NONE, HashAlgorithm.NONE/UNKNOWN,
@@ -52,6 +59,8 @@ def _leaf_facts(candidate: dict[str, Any]) -> set[tuple[str, str]]:
         if isinstance(value, dict):
             for key, val in value.items():
                 if prefix == "device" and key in _DEVICE_FIELDS_EXCLUDED_FROM_FIDELITY:
+                    continue
+                if prefix == "" and key in _TOP_LEVEL_KEYS_EXCLUDED_FROM_FIDELITY:
                     continue
                 _walk(f"{prefix}.{key}" if prefix else key, val)
         elif isinstance(value, list):

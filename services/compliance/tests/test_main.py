@@ -111,6 +111,24 @@ def test_get_audit_run_returns_run_findings_and_summary(client, monkeypatch):
     assert body["summary"]["compliance_score"] == 55
 
 
+def test_get_audit_run_does_not_fabricate_a_score_for_a_run_never_evaluated(client, monkeypatch):
+    """findings is empty for a NEEDS_REVIEW run because evaluation never
+    ran, not because the device is clean — summarize([]) would otherwise
+    report a fabricated 100/100 compliance_score."""
+    monkeypatch.setattr(
+        main.db,
+        "get_audit_run",
+        AsyncMock(return_value={"id": RUN_ID, "status": "NEEDS_REVIEW", "findings": []}),
+    )
+
+    resp = client.get(f"/audit-runs/{RUN_ID}")
+
+    assert resp.status_code == 200
+    summary = resp.json()["summary"]
+    assert summary["compliance_score"] is None
+    assert summary["control_pass_rate"] is None
+
+
 def test_get_unknown_audit_run_is_404(client, monkeypatch):
     monkeypatch.setattr(main.db, "get_audit_run", AsyncMock(return_value=None))
 

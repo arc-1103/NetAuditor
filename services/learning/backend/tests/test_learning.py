@@ -2,6 +2,8 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+
 from app.main import (
     AnomalyCheckRequest,
     BaselineVectorRequest,
@@ -229,6 +231,28 @@ class TestLearningService(unittest.TestCase):
         fake_collection.upsert.assert_called_once()
         _, kwargs = fake_collection.upsert.call_args
         self.assertEqual(kwargs["metadatas"], [{"vendor": "fortinet", "os": "FortiOS", "seed": False}])
+
+    def test_add_vendor_fingerprint_defaults_os_to_unknown_sentinel_never_none(self):
+        """ChromaDB rejects a None metadata value outright, so a missing os
+        (vendor confirmed without a known OS) must use the same UNKNOWN_OS
+        sentinel as ingest_baseline_vector, never a literal None."""
+        fake_collection = MagicMock()
+
+        request = VendorFingerprintRequest(
+            vendor="fortinet",
+            sample_text="config system global\n    set hostname fw-01\nend",
+        )
+
+        with patch(
+            "app.main.get_vendor_fingerprint_collection",
+            return_value=fake_collection,
+        ):
+            result = add_vendor_fingerprint(request)
+
+        self.assertEqual(result, {"stored": True, "vendor": "fortinet"})
+        _, kwargs = fake_collection.upsert.call_args
+        self.assertEqual(kwargs["metadatas"], [{"vendor": "fortinet", "os": "unknown", "seed": False}])
+        self.assertNotIn(None, kwargs["metadatas"][0].values())
 
     def test_add_remediation_manual_stores_excerpt(self):
         fake_collection = MagicMock()
@@ -460,6 +484,29 @@ class TestLearningService(unittest.TestCase):
         self.assertEqual(outlier["status"], "scored")
         self.assertLess(outlier["anomaly_score"], typical["anomaly_score"])
         self.assertTrue(outlier["is_anomaly"])
+
+    def test_anomaly_check_handles_numpy_array_peer_embeddings(self):
+        """ChromaDB's real client returns embeddings as a numpy ndarray, not
+        a plain list. `peers.get("embeddings") or []` raises ValueError on a
+        multi-element array because numpy leaves array truthiness undefined
+        — this must use an explicit None check instead, same as
+        target_embeddings above it."""
+        peer_ids = [f"peer-{i}" for i in range(6)]
+        peer_embeddings = np.array([[0.0, 0.0]] * 6)
+
+        class _NumpyVectorCollection:
+            def get(self, ids=None, where=None, include=None):
+                if ids is not None:
+                    return {"ids": ids, "embeddings": np.array([[0.0, 0.0]])}
+                return {"ids": peer_ids, "embeddings": peer_embeddings}
+
+        request = AnomalyCheckRequest(config_sha256="target-id", vendor="cisco", os="IOS-XE")
+
+        with patch("app.main.get_baseline_vector_collection", return_value=_NumpyVectorCollection()):
+            result = check_baseline_anomaly(request)
+
+        self.assertEqual(result["status"], "scored")
+        self.assertEqual(result["peer_count"], 6)
 
 
 if __name__ == "__main__":

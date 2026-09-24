@@ -17,11 +17,13 @@ export interface Summary {
   total_findings: number;
   by_severity: Record<Severity, number>;
   risk_score: number;
-  compliance_score: number;
+  // null when the run hasn't been evaluated yet (e.g. NEEDS_REVIEW) — the
+  // backend never fabricates a score for a device that was never audited.
+  compliance_score: number | null;
   controls_evaluated?: number;
   controls_failed?: number;
   controls_passed?: number;
-  control_pass_rate?: number;
+  control_pass_rate?: number | null;
 }
 
 export interface AuditRun {

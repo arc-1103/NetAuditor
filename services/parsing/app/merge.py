@@ -49,6 +49,16 @@ def merge_baselines(
     return SecurityBaseline.model_validate(merged), conflicts
 
 
+# A later chunk's alarming finding must never be silently discarded just
+# because an earlier chunk (processed first only by arbitrary file
+# position) reported the safe/negative value for the same field — see
+# reverse_translation.py's "an explicit false is still a real fact" for the
+# same reasoning applied to fidelity scoring. The conflict is still
+# recorded and still costs the usual confidence penalty; only which value
+# survives changes.
+_NEGATIVE_SCALARS = {False, "DISABLED"}
+
+
 def _merge_dict(
     target: dict[str, Any],
     incoming: dict[str, Any],
@@ -75,8 +85,9 @@ def _merge_dict(
                 if item not in target[key]:
                     target[key].append(deepcopy(item))
         elif target[key] != value:
+            if target[key] in _NEGATIVE_SCALARS and value not in _NEGATIVE_SCALARS:
+                target[key] = deepcopy(value)
             conflicts.append(current_path)
-            # Deterministic policy: keep the first known scalar observation.
 
 
 def _is_unknown(value: Any) -> bool:

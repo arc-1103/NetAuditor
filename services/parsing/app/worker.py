@@ -30,6 +30,16 @@ logger = logging.getLogger(__name__)
 
 celery_app = Celery("parsing", broker=settings.celery_broker_url)
 
+# One event loop for the worker process's lifetime, not one per task: the
+# async engine's asyncpg connections are bound to whichever loop opened them,
+# so asyncio.run() (new loop + close every call) breaks the pool on the
+# second task in a process.
+_loop = asyncio.new_event_loop()
+
+
+def _run(coro):
+    return _loop.run_until_complete(coro)
+
 _slm = OllamaSLMClient(
     settings.ollama_host,
     settings.ollama_model,
@@ -256,7 +266,7 @@ async def _parse_chunk(
 @celery_app.task(name="parsing.process_config")
 def process_config(job: dict[str, Any]) -> dict[str, Any]:
     """Celery entrypoint for `parsing.process_config`."""
-    return asyncio.run(_process_config(job))
+    return _run(_process_config(job))
 
 
 async def _process_config(

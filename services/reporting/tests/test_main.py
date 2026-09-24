@@ -28,7 +28,11 @@ async def test_generate_unknown_run_is_404(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_returns_gateway_urls(monkeypatch, tmp_path):
-    monkeypatch.setattr(main.db, "get_report_data", AsyncMock(return_value={"id": RUN_ID, "findings": [], "remediations": []}))
+    monkeypatch.setattr(
+        main.db,
+        "get_report_data",
+        AsyncMock(return_value={"id": RUN_ID, "status": "EVALUATED", "findings": [], "remediations": []}),
+    )
     monkeypatch.setattr(main.db, "record_report", AsyncMock())
     monkeypatch.setattr(main, "generate_pdf", lambda run_id, data: tmp_path / f"netaudit-{run_id}.pdf")
     response = await request("POST",
@@ -41,7 +45,11 @@ async def test_generate_returns_gateway_urls(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_preview_returns_html(monkeypatch):
-    monkeypatch.setattr(main.db, "get_report_data", AsyncMock(return_value={"id": RUN_ID, "findings": [], "remediations": []}))
+    monkeypatch.setattr(
+        main.db,
+        "get_report_data",
+        AsyncMock(return_value={"id": RUN_ID, "status": "EVALUATED", "findings": [], "remediations": []}),
+    )
     response = await request("GET", f"/reports/{RUN_ID}/preview")
     assert response.status_code == 200
     assert "Network Security Compliance Report" in response.text
@@ -50,7 +58,7 @@ async def test_preview_returns_html(monkeypatch):
 @pytest.mark.asyncio
 async def test_json_and_cef_exports(monkeypatch):
     data = {
-        "id": RUN_ID, "file_hash": "a" * 64,
+        "id": RUN_ID, "status": "EVALUATED", "file_hash": "a" * 64,
         "findings": [{"control_id": "CIS-1", "title": "Test", "severity": "HIGH", "evidence": "bad=true", "risk_score": 20}],
         "remediations": [],
     }
@@ -61,3 +69,30 @@ async def test_json_and_cef_exports(monkeypatch):
     assert json_response.json()["summary"]["compliance_score"] == 80
     assert cef_response.status_code == 200
     assert cef_response.text.startswith("CEF:0|")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("POST", "/reports/generate"),
+        ("GET", f"/reports/{RUN_ID}/preview"),
+        ("GET", f"/reports/{RUN_ID}/json"),
+        ("GET", f"/reports/{RUN_ID}/cef"),
+    ],
+)
+async def test_report_endpoints_reject_a_run_never_evaluated(monkeypatch, method, path):
+    """findings is empty for a NEEDS_REVIEW run because evaluation never
+    ran, not because the device is clean — rendering a report from that
+    would show a fabricated 100/100 score, and /reports/generate would go
+    on to permanently mark the never-evaluated run COMPLETE."""
+    monkeypatch.setattr(
+        main.db,
+        "get_report_data",
+        AsyncMock(return_value={"id": RUN_ID, "status": "NEEDS_REVIEW", "findings": [], "remediations": []}),
+    )
+    kwargs = {"json": {"audit_run_id": RUN_ID}} if method == "POST" else {}
+
+    response = await request(method, path, **kwargs)
+
+    assert response.status_code == 422

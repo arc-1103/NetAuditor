@@ -354,7 +354,7 @@ def add_vendor_fingerprint(body: VendorFingerprintRequest):
         collection.upsert(
             ids=[fingerprint_id],
             documents=[body.sample_text],
-            metadatas=[{"vendor": body.vendor, "os": body.os, "seed": False}],
+            metadatas=[{"vendor": body.vendor, "os": body.os or UNKNOWN_OS, "seed": False}],
         )
     except Exception as exc:
         raise HTTPException(
@@ -570,9 +570,12 @@ def check_baseline_anomaly(body: AnomalyCheckRequest):
         )
 
     peer_ids = peers.get("ids") or []
+    raw_peer_embeddings = peers.get("embeddings")
     peer_embeddings = [
         embedding
-        for peer_id, embedding in zip(peer_ids, peers.get("embeddings") or [])
+        for peer_id, embedding in zip(
+            peer_ids, raw_peer_embeddings if raw_peer_embeddings is not None else []
+        )
         if peer_id != body.config_sha256
     ]
 

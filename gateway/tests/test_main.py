@@ -201,8 +201,31 @@ def test_submit_learning_map_proxies_with_user_attribution(client, fake_proxy):
 
     assert resp.status_code == 200
     call = last_proxy_call()
-    assert call["kwargs"]["json"] == body
+    # vendor/os default to "unknown"/None when the caller omits them.
+    assert call["kwargs"]["json"] == {**body, "vendor": "unknown", "os": None}
     assert call["kwargs"]["headers"]["X-User-Id"] == FAKE_USER["sub"]
+
+
+def test_submit_learning_map_forwards_vendor_and_os(client, fake_proxy):
+    """vendor/os must survive the gateway's model, not be silently dropped —
+    Learning pre-filters retrieval by vendor/OS, so a mapping stored under
+    vendor "unknown" is never found again for its real vendor."""
+    fake_proxy(FakeResponse(200, {"confirmed": True}))
+    body = {
+        "block_id": "b1",
+        "cli_pattern": "crypto isakmp policy 10 / hash sha256",
+        "field": "crypto.ike.hash_algorithm",
+        "value": "SHA256",
+        "vendor": "cisco",
+        "os": "ios",
+    }
+
+    resp = client.post("/api/learning/map", json=body)
+
+    assert resp.status_code == 200
+    call = last_proxy_call()
+    assert call["kwargs"]["json"]["vendor"] == "cisco"
+    assert call["kwargs"]["json"]["os"] == "ios"
 
 
 def test_submit_learning_map_rejects_incomplete_body(client, fake_proxy):

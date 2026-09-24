@@ -1,4 +1,5 @@
 ! CIS-FORTIOS-1.6.1 - Configure an authorized-use warning
+! REVIEW: confirm {{ login_banner | default('Authorized access only. Activity may be monitored and reported.') }} before deployment
 config system global
     set pre-login-banner enable
     set post-login-banner enable

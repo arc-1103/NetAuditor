@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import pytest
 
 from app.models import DeviceContext
 from app.slm_client import OllamaSLMClient, SLMError
+
+DEMO_DIR = Path(__file__).resolve().parents[3] / "demo"
 
 
 @pytest.mark.asyncio
@@ -247,3 +251,108 @@ async def test_reverse_translate_rejects_non_json_response(monkeypatch):
 
     with pytest.raises(SLMError):
         await client.reverse_translate({"ssh": {"enabled": True}}, context)
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_extracts_cisco_snmp_default_community():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("cisco", "IOS-XE", None, None, None, 0.96)
+    result = await client.generate(
+        "prompt",
+        "snmp-server community public RO\nsnmp-server host 10.20.10.12 version 2c public\n",
+        {},
+        device_context=context,
+    )
+    assert result.value["snmp"]["community_strings"] == ["public"]
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_extracts_fortios_snmp_community_block():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("fortinet", "FortiOS", None, None, None, 0.9)
+    result = await client.generate(
+        "prompt",
+        'config system snmp community\n    edit 1\n        set name "public"\n        set status enable\n    next\nend\n',
+        {},
+        device_context=context,
+    )
+    assert result.value["snmp"]["community_strings"] == ["public"]
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_extracts_cisco_ike_encryption():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("cisco", "IOS-XE", None, None, None, 0.96)
+    result = await client.generate(
+        "prompt",
+        "crypto isakmp policy 10\n encryption 3des\n hash md5\n authentication pre-share\n group 2\n",
+        {},
+        device_context=context,
+    )
+    assert result.value["crypto"]["ike_policies"] == [{"policy_id": 10, "encryption": "3DES"}]
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_extracts_fortios_ike_proposal():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("fortinet", "FortiOS", None, None, None, 0.9)
+    result = await client.generate(
+        "prompt",
+        'config vpn ipsec phase1-interface\n    edit "legacy-tunnel"\n        set proposal des-md5 3des-sha1\n    next\nend\n',
+        {},
+        device_context=context,
+    )
+    policies = result.value["crypto"]["ike_policies"]
+    assert {"policy_id": None, "encryption": "DES"} in policies
+    assert {"policy_id": None, "encryption": "3DES"} in policies
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_extracts_fortios_telnet_enabled():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("fortinet", "FortiOS", None, None, None, 0.9)
+    result = await client.generate("prompt", "set admin-telnet enable\n", {}, device_context=context)
+    assert result.value["telnet"] == {"enabled": "ENABLED"}
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_extracts_fortios_http_admin_access():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("fortinet", "FortiOS", None, None, None, 0.9)
+    result = await client.generate("prompt", "set allowaccess ping http ssh snmp\n", {}, device_context=context)
+    assert result.value["services"] == {"http_server_enabled": "ENABLED"}
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_extracts_negated_password_encryption():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("cisco", "IOS-XE", None, None, None, 0.96)
+    result = await client.generate("prompt", "no service password-encryption\n", {}, device_context=context)
+    assert result.value["aaa"] == {"password_encryption": "DISABLED"}
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_produces_required_findings_fields_for_cisco_demo_fixture():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("cisco", "IOS-XE", None, None, None, 0.96)
+    text = (DEMO_DIR / "cisco_insecure.cfg").read_text()
+
+    result = await client.generate("prompt", text, {}, device_context=context)
+
+    assert "public" in result.value["snmp"]["community_strings"]
+    assert {"policy_id": 10, "encryption": "3DES"} in result.value["crypto"]["ike_policies"]
+
+
+@pytest.mark.asyncio
+async def test_mock_slm_produces_required_findings_fields_for_fortinet_demo_fixture():
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("fortinet", "FortiOS", None, None, None, 0.9)
+    text = (DEMO_DIR / "fortinet_insecure.conf").read_text()
+
+    result = await client.generate("prompt", text, {}, device_context=context)
+
+    assert "public" in result.value["snmp"]["community_strings"]
+    encryptions = {policy["encryption"] for policy in result.value["crypto"]["ike_policies"]}
+    assert encryptions == {"DES", "3DES"}
+    assert result.value["telnet"] == {"enabled": "ENABLED"}
+    assert result.value["services"] == {"http_server_enabled": "ENABLED"}

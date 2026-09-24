@@ -14,6 +14,19 @@ class GenerateRequest(BaseModel):
     audit_run_id: str
 
 
+def _require_evaluated(data: dict) -> None:
+    """A run only has trustworthy findings once it's actually been
+    evaluated — for any other status, findings is empty because evaluation
+    never ran, not because the device is clean. Rendering a report from
+    that would show a fabricated 100/100 score, and /reports/generate would
+    go on to permanently mark the never-evaluated run COMPLETE."""
+    if data["status"] not in {"EVALUATED", "COMPLETE"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Audit run has status {data['status']!r}; no evaluated findings exist yet to report on",
+        )
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "reporting"}
@@ -24,6 +37,7 @@ async def generate(body: GenerateRequest, x_user_id: str | None = Header(default
     data = await db.get_report_data(body.audit_run_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {body.audit_run_id}")
+    _require_evaluated(data)
     path = generate_pdf(body.audit_run_id, data)
     await db.record_report(body.audit_run_id, str(path), x_user_id or "unknown")
     return {
@@ -52,6 +66,7 @@ async def preview(audit_run_id: str):
     data = await db.get_report_data(audit_run_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")
+    _require_evaluated(data)
     return HTMLResponse(render_html(data))
 
 
@@ -60,6 +75,7 @@ async def json_export(audit_run_id: str):
     data = await db.get_report_data(audit_run_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")
+    _require_evaluated(data)
     return build_json_report(data)
 
 
@@ -68,6 +84,7 @@ async def cef_export(audit_run_id: str):
     data = await db.get_report_data(audit_run_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")
+    _require_evaluated(data)
     return PlainTextResponse(
         render_cef(data),
         media_type="text/plain",

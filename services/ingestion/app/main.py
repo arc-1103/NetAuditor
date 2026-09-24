@@ -7,7 +7,7 @@ from fastapi import FastAPI, UploadFile, File, Header, HTTPException
 from app.uploader import validate_and_store
 from app.chunker import chunk_config
 from app.queue_producer import enqueue_parsing_job
-from app.db import create_audit_run
+from app.db import create_audit_run, audit_run_exists_for_hash
 
 app = FastAPI(title="netaudit-ingestion")
 
@@ -30,6 +30,9 @@ async def upload_config(
         stored = await validate_and_store(file)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    if await audit_run_exists_for_hash(stored["file_hash"]):
+        raise HTTPException(status_code=400, detail=f"File already ingested (hash={stored['file_hash']})")
 
     # Gateway forwards the JWT subject as X-User-Id; this hop itself is
     # unauthenticated (internal network), so a missing/malformed header

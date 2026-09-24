@@ -140,3 +140,32 @@ async def test_provider_returns_empty_string_on_transport_error(monkeypatch):
     provider = LearningRAGContextProvider("http://learning:8003")
 
     assert await provider.retrieve("cisco", "IOS-XE", "config text") == ""
+
+
+@pytest.mark.asyncio
+async def test_provider_logs_a_warning_on_transport_error(monkeypatch, caplog):
+    """A silently swallowed outage is indistinguishable from a genuinely
+    empty match; this failure must be visible in the logs, same as the
+    parse cache's outage handling (app/parse_cache.py)."""
+    import httpx
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr("app.rag.httpx.AsyncClient", FailingClient)
+    provider = LearningRAGContextProvider("http://learning:8003")
+
+    with caplog.at_level("WARNING", logger="app.rag"):
+        await provider.retrieve("cisco", "IOS-XE", "config text")
+
+    assert any("Learning/RAG context unavailable" in message for message in caplog.messages)

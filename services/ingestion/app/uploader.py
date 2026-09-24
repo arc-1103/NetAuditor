@@ -8,7 +8,6 @@ import re
 
 import magic
 from minio import Minio
-from minio.error import S3Error
 
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
 ALLOWED_EXTENSIONS = os.getenv("ALLOWED_EXTENSIONS", ".cfg,.txt,.conf").split(",")
@@ -31,14 +30,27 @@ _minio_client = None
 CREDENTIAL_PATTERNS = [
     re.compile(r"(?im)^(\s*enable\s+(?:secret|password)\s+(?:\d+\s+)?)(\S+)\s*$"),
     re.compile(r"(?im)^(\s*username\s+\S+(?:\s+\S+)*?\s+(?:secret|password)\s+(?:\d+\s+)?)(\S+)\s*$"),
-    re.compile(r"(?im)^(\s*snmp-server\s+community\s+)(\S+)"),
     re.compile(r"(?im)^(\s*password\s+(?:\d+\s+)?)(\S+)\s*$"),
     re.compile(r"(?im)^(\s*(?:wpa-psk|pre-shared-key|key)\s+(?:ascii|hex)?\s*)(\S+)\s*$"),
 ]
 
+# "public"/"private" are well-known SNMP defaults, not secrets — compliance
+# check CIS-NET-1.2.2 needs them left visible in the text to ever fire.
+_DEFAULT_SNMP_COMMUNITIES = {"public", "private"}
+
 
 def redact_credentials(text: str) -> str:
     redacted = text
+    # Any non-default community is a real secret and is also reused as the
+    # implicit auth token on `snmp-server host ... <community>` lines, so
+    # redact it everywhere it appears, not just on the `community` line.
+    custom_communities = {
+        m.group(1)
+        for m in re.finditer(r"(?im)^\s*snmp-server\s+community\s+(\S+)", redacted)
+        if m.group(1).lower() not in _DEFAULT_SNMP_COMMUNITIES
+    }
+    for community in custom_communities:
+        redacted = re.sub(rf"(?<!\S){re.escape(community)}(?!\S)", "[REDACTED]", redacted)
     for pattern in CREDENTIAL_PATTERNS:
         redacted = pattern.sub(lambda m: m.group(1) + "[REDACTED]", redacted)
     return redacted
@@ -82,12 +94,6 @@ async def validate_and_store(file) -> dict:
     storage_path = f"{MINIO_BUCKET}/{object_name}"
 
     client = get_minio_client()
-    try:
-        client.stat_object(MINIO_BUCKET, object_name)
-        raise ValueError(f"File already ingested (hash={file_hash})")
-    except S3Error as e:
-        if e.code != "NoSuchKey":
-            raise
 
     redacted_text = redact_credentials(contents.decode("utf-8", errors="replace"))
     redacted_bytes = redacted_text.encode("utf-8")

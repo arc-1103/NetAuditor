@@ -47,6 +47,27 @@ class TestUnknownHandler(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "raw_text"):
             unknown_handler.receive_unknown_block({"block_id": "b1", "audit_run_id": RUN_ID})
 
+    def test_worker_reuses_one_event_loop_across_tasks(self):
+        """asyncio.run() opens a fresh loop and closes it on every call,
+        which breaks the module-level asyncpg pool on the second task in a
+        worker process (its connections stay bound to the first, now-closed
+        loop). _run must actually execute every task on the same persistent
+        loop instead."""
+        block = {"block_id": f"{RUN_ID}:0", "audit_run_id": RUN_ID, "raw_text": "x"}
+        seen_loops = []
+
+        async def fake_enqueue_block(*args, **kwargs):
+            seen_loops.append(asyncio.get_running_loop())
+
+        with patch.object(unknown_handler.db, "enqueue_block", fake_enqueue_block):
+            unknown_handler.receive_unknown_block(block)
+            unknown_handler.receive_unknown_block(block)
+
+        self.assertEqual(len(seen_loops), 2)
+        self.assertIs(seen_loops[0], seen_loops[1])
+        self.assertIs(seen_loops[0], unknown_handler._loop)
+        self.assertFalse(unknown_handler._loop.is_closed())
+
 
 if __name__ == "__main__":
     unittest.main()

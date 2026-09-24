@@ -89,3 +89,43 @@ def test_explicit_chunk_values_do_not_get_erased_by_model_defaults():
     assert merged.ssh.enabled is True
     assert merged.ssh.version == "2"
     assert conflicts == []
+
+
+def _baseline_with_telnet(enabled: str) -> SecurityBaseline:
+    return SecurityBaseline(
+        device={
+            "detected_vendor": "cisco",
+            "config_sha256": hashlib.sha256(b"config").hexdigest(),
+            "parsing_confidence": 0.9,
+        },
+        telnet={"enabled": enabled},
+    )
+
+
+def test_a_later_chunks_risky_finding_survives_an_earlier_safe_observation():
+    """An earlier chunk's "DISABLED" must not hide a later chunk's
+    "ENABLED" for the same field just because it was processed first —
+    the real device fact is that telnet is enabled somewhere."""
+    safe_first = _baseline_with_telnet("DISABLED")
+    risky_second = _baseline_with_telnet("ENABLED")
+    merged, conflicts = merge_baselines([safe_first, risky_second])
+    assert merged.telnet.enabled == "ENABLED"
+    assert "telnet.enabled" in conflicts
+
+
+def test_a_risky_finding_survives_regardless_of_chunk_order():
+    risky_first = _baseline_with_telnet("ENABLED")
+    safe_second = _baseline_with_telnet("DISABLED")
+    merged, conflicts = merge_baselines([risky_first, safe_second])
+    assert merged.telnet.enabled == "ENABLED"
+    assert "telnet.enabled" in conflicts
+
+
+def test_non_boolean_scalar_conflict_still_keeps_the_first_observation():
+    """Two different hostnames aren't a safe/risky pair — the existing
+    keep-first policy is unchanged for genuinely different scalars."""
+    a = baseline(raw_hostname="first")
+    b = baseline(raw_hostname="other")
+    merged, conflicts = merge_baselines([a, b])
+    assert merged.device.raw_hostname == "first"
+    assert "device.raw_hostname" in conflicts

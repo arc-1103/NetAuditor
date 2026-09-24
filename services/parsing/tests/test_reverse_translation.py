@@ -85,3 +85,21 @@ def test_an_explicit_false_is_still_a_real_fact():
     original = {"ssh": {"enabled": False}}
     assert compute_fidelity(original, {}) == 0.0
     assert compute_fidelity(original, {"ssh": {"enabled": False}}) == 1.0
+
+
+def test_topology_is_excluded_from_the_diff():
+    """GraphRAG topology (slm_client.py's _extract_topology) feeds
+    blast-radius tracing, not the security baseline, and Agent B never
+    reconstructs "interface ..." blocks from it — so it always vanishes on
+    round trip regardless of whether Agent A's real extraction was faithful.
+    A chunk with real security facts plus an interface block must not be
+    penalized just because the interface didn't survive."""
+    original = {
+        "ssh": {"enabled": True, "version": "2"},
+        "topology": {
+            "interfaces": [{"name": "GigabitEthernet0/1", "description": "USERS"}],
+            "routing_neighbors": [{"protocol": "bgp", "neighbor_ip": "10.0.0.1", "remote_asn": 65000}],
+        },
+    }
+    roundtrip = {"ssh": {"enabled": True, "version": "2"}}
+    assert compute_fidelity(original, roundtrip) == 1.0

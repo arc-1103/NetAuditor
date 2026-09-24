@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Protocol
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 def _tokens(text: str) -> set[str]:
@@ -86,7 +89,8 @@ class LearningRAGContextProvider:
                 )
                 response.raise_for_status()
                 body = response.json()
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Learning/RAG context unavailable: %s", exc)
             return ""
 
         return self._correct(body.get("results") or {}, config_text)

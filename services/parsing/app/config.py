@@ -23,6 +23,10 @@ class Settings:
         "POSTGRES_DSN", "postgresql+asyncpg://netaudit:changeme_in_local_env@postgres:5432/netaudit"
     )
     learning_url: str = os.getenv("LEARNING_URL", "http://learning:8003")
+    # ponytail: placeholder CRAG band edges (app/rag.py), not calibrated
+    # against a labeled corpus of real ChromaDB distances. Env-overridable
+    # now; measure false-accept/false-reject at each edge against a reviewed
+    # vendor corpus (see benchmarks/) before trusting these in production.
     rag_correct_max_distance: float = float(os.getenv("RAG_CORRECT_MAX_DISTANCE", "0.4"))
     rag_ambiguous_max_distance: float = float(os.getenv("RAG_AMBIGUOUS_MAX_DISTANCE", "0.8"))
     logprob_uncertainty_threshold: float = float(os.getenv("LOGPROB_UNCERTAINTY_THRESHOLD", "-0.5"))

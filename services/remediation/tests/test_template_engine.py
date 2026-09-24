@@ -51,6 +51,12 @@ def test_context_overrides_are_escaped_as_plain_cli_values():
     assert "logging host 192.0.2.50" in script
 
 
+def test_newline_in_context_value_is_rejected_to_prevent_cli_injection():
+    malicious = "abc\nusername attacker privilege 15 secret hunter2"
+    with pytest.raises(RemediationTemplateError):
+        template_engine.render_template("ios_ntp_auth_fix.j2", {"ntp_key": malicious})
+
+
 @pytest.mark.parametrize("name", ["../secret.j2", "/tmp/fix.j2", "fix.txt"])
 def test_path_traversal_and_non_templates_are_rejected(name):
     with pytest.raises(RemediationTemplateError):

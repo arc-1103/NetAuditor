@@ -25,6 +25,16 @@ from app import db
 
 celery_app = Celery("learning", broker=os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
 
+# One event loop for the worker process's lifetime, not one per task: the
+# async engine's asyncpg connections are bound to whichever loop opened them,
+# so asyncio.run() (new loop + close every call) breaks the pool on the
+# second task in a process.
+_loop = asyncio.new_event_loop()
+
+
+def _run(coro):
+    return _loop.run_until_complete(coro)
+
 
 @celery_app.task(name="learning.receive_unknown_block")
 def receive_unknown_block(block: dict) -> dict:
@@ -47,7 +57,7 @@ def receive_unknown_block(block: dict) -> dict:
     if not isinstance(raw_text, str):
         raise ValueError("learning.receive_unknown_block requires 'raw_text' as a string")
 
-    asyncio.run(db.enqueue_block(block_id, audit_run_id, raw_text, block.get("chunk_context")))
+    _run(db.enqueue_block(block_id, audit_run_id, raw_text, block.get("chunk_context")))
     return {"queued": True, "block_id": block_id}
 
 

@@ -66,3 +66,14 @@ async def test_create_audit_run_allows_missing_uploader(sqlite_session):
         row = result.mappings().first()
 
     assert row["uploaded_by"] is None
+
+
+async def test_audit_run_exists_for_hash_true_after_insert(sqlite_session):
+    stored = {"file_hash": "g" * 64, "storage_path": "raw-configs/ggg.cfg", "original_filename": "device.cfg"}
+    await db.create_audit_run("run-3", stored, None)
+
+    assert await db.audit_run_exists_for_hash("g" * 64) is True
+
+
+async def test_audit_run_exists_for_hash_false_when_absent(sqlite_session):
+    assert await db.audit_run_exists_for_hash("h" * 64) is False
