@@ -63,9 +63,12 @@ Current implementation status:
       strips `enable secret/password`, `username ... secret/password`,
       `snmp-server community`, generic `password`, and PSK/key lines
       before the file is written to MinIO or chunked for Parsing.
-- [x] Actual dedup enforcement — `validate_and_store` now does a
-      `stat_object` check against MinIO before writing; a matching
-      `file_hash` raises a 400 rather than re-ingesting.
+- [ ] Actual dedup enforcement — `validate_and_store` computes `file_hash`
+      and content-addresses the MinIO object name by it, but never checks
+      for an existing hash (no `stat_object` call anywhere in
+      `uploader.py`) before writing or dispatching a new audit run. A
+      repeat upload of identical content re-ingests rather than being
+      rejected.
 
 ## 4. Data contract this lane owns
 

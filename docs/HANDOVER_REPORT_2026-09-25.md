@@ -14,9 +14,10 @@ most current status source. It does **not** supersede
 `docs/HANDOVER_REPORT_2026-09-09.md` or `docs/report.md` — those stay as
 historical session records; this report picks up where they left off.
 
-Nothing in §6 (doc cleanup recommendations) has been executed. This is a
-proposal, not a changelog — deletions/merges need their own go-ahead before
-anything is actually removed.
+§6.3's four duplicate-file deletions (and the two inaccurate checkboxes
+they depended on fixing first) have been executed — see the updated §6.3.
+Everything else in §6 (the consolidation merges) is still a proposal, not
+a changelog — those need their own go-ahead before anything is merged.
 
 ---
 
@@ -217,20 +218,20 @@ Status legend: **C** current, **S** stale/needs refresh, **D** duplicate,
 | `report.md` | H | Keep, relabel as historical (already self-aware — `context.md` calls it out as such) |
 | `HANDOVER_REPORT_2026-09-25.md` | — | This document |
 
-### 6.3 Duplicates (the real cleanup item)
+### 6.3 Duplicates — resolved this session
 
-| Pair | Verdict | Recommendation |
+| Pair | Verdict | Action taken |
 |---|---|---|
-| `gateway/Architecture.md` == `gateway/app/Architecture.md` | Byte-identical, both current | Delete `app/` copy |
-| `gateway/Bludeprint.md` == `gateway/app/Bludeprint.md` | Byte-identical, **both stale** — MIME check + credential redaction are marked `[ ]` but are actually implemented in `uploader.py` | Update content (check the two boxes), then delete `app/` copy |
-| `services/ingestion/Architecture.md` ~= `services/ingestion/app/Architecture.md` | Functionally identical (line-ending diff only) | Keep one, delete the other |
-| `services/ingestion/BluePrint.md` vs `services/ingestion/app/BluePrint.md` | **Diverged major** — root has the updated checklist (MIME + redaction checked, correctly), `app/` is the stale all-unchecked fork. But root **overclaims**: it checks off dedup enforcement, and `uploader.py` never actually calls `stat_object`/checks for an existing hash before writing | Keep root, **uncheck the dedup box** (real gap, not done), delete `app/` copy |
+| `gateway/Architecture.md` == `gateway/app/Architecture.md` | Byte-identical, both current | **Deleted** `app/` copy |
+| `gateway/Bludeprint.md` == `gateway/app/Bludeprint.md` | Byte-identical, **both stale** — MIME check + credential redaction were marked `[ ]` but are actually implemented in `uploader.py` | **Fixed** root's checkboxes (both now `[x]`, cited against `uploader.py`), **deleted** `app/` copy |
+| `services/ingestion/Architecture.md` ~= `services/ingestion/app/Architecture.md` | Functionally identical (line-ending diff only) | **Deleted** `app/` copy, kept root |
+| `services/ingestion/BluePrint.md` vs `services/ingestion/app/BluePrint.md` | **Diverged major** — root had the updated checklist (MIME + redaction checked, correctly), `app/` was the stale all-unchecked fork. But root **overclaimed**: it checked off dedup enforcement, and `uploader.py` never actually calls `stat_object`/checks for an existing hash before writing | **Fixed** root's dedup checkbox back to `[ ]` with an accurate note, **deleted** `app/` copy |
 
-Net finding: doc-authority isn't consistently root-level or app/-level across
-these pairs — it's inconsistent per-pair, which is its own hygiene problem
-independent of the individual staleness. Recommend consolidating to
-root-level for all four services that have this pattern (matching where
-README.md already lives) before deleting anything.
+Net finding, still worth recording: doc-authority wasn't consistently
+root-level or app/-level across these pairs before this fix — it was
+inconsistent per-pair, which was its own hygiene problem independent of
+the individual staleness. Root-level is now the sole copy for all four,
+matching where `README.md` already lives.
 
 ### 6.4 Consolidation candidates
 

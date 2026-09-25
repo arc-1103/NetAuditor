@@ -56,12 +56,13 @@ Current implementation status:
       current `.env.example` says 10MB, reconcile this before demo**)
 - [x] Extension allowlist (`.cfg,.txt,.conf`)
 - [x] SHA-256 hashing for dedup key
-- [ ] python-magic MIME check — `uploader.py` currently only checks file
-      extension, not actual content type. This is a gap against the
-      blueprint's stated defense, not yet closed.
-- [ ] Credential redaction regex scan — not yet implemented anywhere.
+- [x] python-magic MIME check — `uploader.py::validate_and_store` calls
+      `magic.from_buffer(contents, mime=True)` and rejects non-text content.
+- [x] Credential redaction regex scan — `uploader.py::redact_credentials`
+      strips SNMP community strings/passwords/PSKs before storage.
 - [ ] Actual dedup enforcement (currently hashes but doesn't check for
-      existing identical upload before proceeding)
+      existing identical upload before proceeding — no `stat_object` call
+      anywhere in `uploader.py`)
 
 ## 4. Data contract this lane owns
 
