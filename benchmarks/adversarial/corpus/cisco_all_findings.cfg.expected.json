@@ -1,0 +1,67 @@
+{
+  "detected_vendor": "cisco",
+  "expected_baseline": {
+    "aaa": {
+      "password_encryption": "DISABLED"
+    },
+    "banners": {
+      "login_banner_present": false
+    },
+    "crypto": {
+      "ike_policies": [
+        {
+          "authentication_method": "pre-share",
+          "dh_group": 2,
+          "encryption": "3DES",
+          "hash_algorithm": "MD5",
+          "policy_id": 10
+        }
+      ]
+    },
+    "device": {
+      "raw_hostname": "branch-core-worstcase"
+    },
+    "logging": {
+      "local_buffer_enabled": true,
+      "syslog_enabled": false
+    },
+    "ntp": {
+      "authentication_enabled": false,
+      "enabled": true,
+      "servers": [
+        "10.80.10.20"
+      ]
+    },
+    "services": {
+      "http_server_enabled": "ENABLED",
+      "https_server_enabled": "DISABLED"
+    },
+    "snmp": {
+      "community_strings": [
+        "public",
+        "private"
+      ],
+      "enabled": true,
+      "version": "v2c"
+    },
+    "ssh": {
+      "enabled": true,
+      "version": "1"
+    },
+    "telnet": {
+      "enabled": "ENABLED"
+    },
+    "topology": {
+      "interfaces": [
+        {
+          "description": "WAN uplink",
+          "enabled": true,
+          "ip_address": "10.80.0.1",
+          "name": "GigabitEthernet0/0",
+          "subnet_mask": "255.255.255.252"
+        }
+      ]
+    }
+  },
+  "vendor": "cisco"
+}

@@ -1,0 +1,42 @@
+{
+  "detected_vendor": "cisco",
+  "expected_baseline": {
+    "aaa": {
+      "password_encryption": "ENABLED"
+    },
+    "banners": {
+      "login_banner_present": false
+    },
+    "device": {
+      "raw_hostname": "lab-switch-minimal"
+    },
+    "logging": {
+      "syslog_enabled": false
+    },
+    "ntp": {
+      "authentication_enabled": false
+    },
+    "services": {
+      "http_server_enabled": "DISABLED"
+    },
+    "ssh": {
+      "enabled": true,
+      "version": "2"
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    },
+    "topology": {
+      "interfaces": [
+        {
+          "description": null,
+          "enabled": true,
+          "ip_address": "10.90.0.1",
+          "name": "GigabitEthernet0/1",
+          "subnet_mask": "255.255.255.252"
+        }
+      ]
+    }
+  },
+  "vendor": "cisco"
+}

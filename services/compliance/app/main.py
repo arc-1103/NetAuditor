@@ -10,11 +10,13 @@ side normally arrives as a Celery task — see app/worker.py.
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from app import db
+from app import db, opa_client
+from app.counterfactual import counterfactual
 from app.evaluator import evaluate_baseline, shutdown_graph_provider
 from app.opa_client import OPAEvaluationError
 from app.reachability_diff import diff_acl
 from app.risk_scorer import fleet_score, summarize
+from app.trust import build_trust_view
 
 app = FastAPI(title="netaudit-compliance")
 
@@ -44,6 +46,13 @@ async def _close_graph_provider() -> None:
     await shutdown_graph_provider()
 
 
+class CounterfactualRequest(BaseModel):
+    # SecurityBaseline-shaped dicts, same reasoning as EvaluateRequest.baseline.
+    current_baseline: dict
+    proposed_baseline: dict
+    framework: str | None = None
+
+
 class ReachabilityDiffRequest(BaseModel):
     # ACLConfig-shaped dicts — kept as open dicts for the same reason
     # EvaluateRequest.baseline is: services/schema/ is the shape's home, and
@@ -60,6 +69,7 @@ class EvaluateRequest(BaseModel):
     framework: str | None = None
     audit_run_id: str | None = None
     source_text: str | None = None
+    parser_agreement: float | None = None
 
 
 @app.get("/health")
@@ -76,7 +86,8 @@ async def evaluate(body: EvaluateRequest):
     """
     try:
         return await evaluate_baseline(
-            body.baseline, body.framework, body.audit_run_id, source_text=body.source_text
+            body.baseline, body.framework, body.audit_run_id,
+            source_text=body.source_text, parser_agreement=body.parser_agreement,
         )
     except ValueError as e:  # unknown framework
         raise HTTPException(status_code=400, detail=str(e))
@@ -101,6 +112,35 @@ async def get_audit_run(run_id: str):
     is_evaluated = run["status"] in {db.STATUS_EVALUATED, "COMPLETE"}
     summary = summarize(run["findings"]) if is_evaluated else _NOT_EVALUATED_SUMMARY
     return {**run, "summary": summary}
+
+
+@app.post("/counterfactual")
+async def counterfactual_endpoint(body: CounterfactualRequest):
+    """docs/Suggestions.md item 3 — "what happens if I apply this fix?"
+    Scores both baselines through the same OPA bundle a real upload uses,
+    without persisting either or touching GraphRAG/anomaly enrichment (see
+    app/counterfactual.py for why), then diffs the result."""
+    try:
+        current_findings = await opa_client.evaluate(body.current_baseline, body.framework)
+        proposed_findings = await opa_client.evaluate(body.proposed_baseline, body.framework)
+    except ValueError as e:  # unknown framework
+        raise HTTPException(status_code=400, detail=str(e))
+    except OPAEvaluationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return counterfactual(
+        current_findings, proposed_findings,
+        body.current_baseline.get("acl"), body.proposed_baseline.get("acl"),
+    )
+
+
+@app.get("/audit-runs/{run_id}/trust")
+async def get_trust_view(run_id: str):
+    """docs/Suggestions.md item 7 (AI Interpretation Trust Layer) — per-field
+    SLM-vs-TextFSM agreement. See app/trust.py."""
+    data = await db.get_trust_data(run_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"No audit run {run_id}")
+    return build_trust_view(data["baseline_snapshot"], data["deterministic_baseline"], data["parser_agreement"])
 
 
 @app.post("/reachability-diff")

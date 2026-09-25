@@ -1,0 +1,52 @@
+Value HOSTNAME (\S+)
+Value ADMIN_TELNET (enable|disable)
+Value SNMP_SYSINFO_STATUS (enable|disable)
+Value List SNMP_COMMUNITY_NAME (\S+)
+Value SNMP_USER_PRESENT (\S+)
+Value IKE_PROPOSAL (.+)
+Value SYSLOG_STATUS (enable|disable)
+Value SYSLOG_SERVER (\S+)
+Value BANNER_BUFFER (.+)
+
+Start
+  ^config system global -> Global
+  ^config system snmp sysinfo -> SnmpSysinfo
+  ^config system snmp community -> SnmpCommunity
+  ^config system snmp user -> SnmpUser
+  ^config vpn ipsec phase1-interface -> Ipsec
+  ^config log syslogd setting -> Syslog
+  ^config system replacemsg admin -> Banner
+  ^config -> Skip
+
+Skip
+  ^end -> Start
+
+Global
+  ^\s+set hostname\s+"${HOSTNAME}"
+  ^\s+set admin-telnet\s+${ADMIN_TELNET}
+  ^end -> Start
+
+SnmpSysinfo
+  ^\s+set status\s+${SNMP_SYSINFO_STATUS}
+  ^end -> Start
+
+SnmpCommunity
+  ^\s+set name\s+"${SNMP_COMMUNITY_NAME}"
+  ^end -> Start
+
+SnmpUser
+  ^\s+edit\s+"${SNMP_USER_PRESENT}"
+  ^end -> Start
+
+Ipsec
+  ^\s+set proposal\s+${IKE_PROPOSAL}\s*$$
+  ^end -> Start
+
+Syslog
+  ^\s+set status\s+${SYSLOG_STATUS}
+  ^\s+set server\s+"${SYSLOG_SERVER}"
+  ^end -> Start
+
+Banner
+  ^\s+set buffer\s+"${BANNER_BUFFER}"\s*$$
+  ^end -> Start

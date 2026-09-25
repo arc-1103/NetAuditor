@@ -1,0 +1,43 @@
+{
+  "detected_vendor": "fortinet",
+  "expected_baseline": {
+    "banners": {
+      "login_banner_present": false
+    },
+    "crypto": {
+      "ike_policies": [
+        {
+          "authentication_method": null,
+          "dh_group": null,
+          "encryption": "DES",
+          "hash_algorithm": "MD5",
+          "policy_id": null
+        },
+        {
+          "authentication_method": null,
+          "dh_group": null,
+          "encryption": "3DES",
+          "hash_algorithm": "SHA1",
+          "policy_id": null
+        }
+      ]
+    },
+    "device": {
+      "raw_hostname": "edge-fw-01"
+    },
+    "logging": {
+      "syslog_enabled": false
+    },
+    "snmp": {
+      "community_strings": [
+        "public"
+      ],
+      "enabled": true,
+      "version": "v2c"
+    },
+    "telnet": {
+      "enabled": "ENABLED"
+    }
+  },
+  "vendor": "fortinet"
+}

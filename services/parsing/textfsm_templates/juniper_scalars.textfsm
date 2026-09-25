@@ -1,0 +1,26 @@
+Value HOSTNAME (\S+)
+Value TELNET (telnet)
+Value HTTP_SERVICES (http)
+Value SSH_SERVICES_SEEN (ssh)
+Value PASSWORD_ENC_ON (encrypted-password)
+Value PASSWORD_ENC_OFF (plain-text-password)
+Value List SNMP_COMMUNITY (\S+)
+Value SNMP_V3_USER (\S+)
+Value List NTP_SERVER (\S+)
+Value NTP_AUTH_KEY (\d+)
+Value List SYSLOG_HOST (\S+)
+Value LOGIN_MESSAGE (.+)
+
+Start
+  ^set system host-name\s+${HOSTNAME}
+  ^set system services\s+${TELNET}\s*$$
+  ^set system services web-management\s+${HTTP_SERVICES}\s*$$
+  ^set system services\s+${SSH_SERVICES_SEEN}
+  ^.*authentication\s+${PASSWORD_ENC_ON}
+  ^.*authentication\s+${PASSWORD_ENC_OFF}\s*$$
+  ^set snmp community\s+${SNMP_COMMUNITY}\s+
+  ^set snmp v3 usm local-engine user\s+${SNMP_V3_USER}\s+
+  ^set system ntp server\s+${NTP_SERVER}
+  ^set system ntp authentication-key\s+${NTP_AUTH_KEY}
+  ^set system syslog host\s+${SYSLOG_HOST}
+  ^set system login message\s+"${LOGIN_MESSAGE}"

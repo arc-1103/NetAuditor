@@ -1,0 +1,53 @@
+{
+  "detected_vendor": "cisco",
+  "expected_baseline": {
+    "aaa": {
+      "password_encryption": "ENABLED"
+    },
+    "banners": {
+      "login_banner_present": true
+    },
+    "device": {
+      "raw_hostname": "access-sw-telnet-demo"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.71.10.30"
+      ]
+    },
+    "ntp": {
+      "authentication_enabled": true,
+      "enabled": true,
+      "servers": [
+        "10.71.10.20"
+      ]
+    },
+    "services": {
+      "http_server_enabled": "DISABLED"
+    },
+    "snmp": {
+      "enabled": true,
+      "version": "v3"
+    },
+    "ssh": {
+      "enabled": true,
+      "version": "2"
+    },
+    "telnet": {
+      "enabled": "ENABLED"
+    },
+    "topology": {
+      "interfaces": [
+        {
+          "description": "ACCESS-UPLINK",
+          "enabled": true,
+          "ip_address": "10.71.0.1",
+          "name": "GigabitEthernet0/1",
+          "subnet_mask": "255.255.255.252"
+        }
+      ]
+    }
+  },
+  "vendor": "cisco"
+}

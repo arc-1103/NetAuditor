@@ -1,0 +1,39 @@
+{
+  "detected_vendor": "fortinet",
+  "expected_baseline": {
+    "banners": {
+      "login_banner_present": false
+    },
+    "crypto": {
+      "ike_policies": [
+        {
+          "authentication_method": null,
+          "dh_group": null,
+          "encryption": "AES256",
+          "hash_algorithm": "SHA256",
+          "policy_id": null
+        }
+      ]
+    },
+    "device": {
+      "raw_hostname": "branch-fw-snmp-demo"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.31.10.30"
+      ]
+    },
+    "snmp": {
+      "community_strings": [
+        "public"
+      ],
+      "enabled": true,
+      "version": "v2c"
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    }
+  },
+  "vendor": "fortinet"
+}

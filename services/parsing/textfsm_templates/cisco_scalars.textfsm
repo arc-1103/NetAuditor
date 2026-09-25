@@ -1,0 +1,38 @@
+Value Filldown HOSTNAME (\S+)
+Value Filldown PASSWORD_ENCRYPTION_ON (service password-encryption)
+Value Filldown PASSWORD_ENCRYPTION_OFF (no service password-encryption)
+Value Filldown SSH_VERSION (\d(?:-\d)?)
+Value Filldown MGMT_ACL (\S+)
+Value Filldown TELNET_TRANSPORT (.*)
+Value Filldown HTTP_ON (ip http server)
+Value Filldown HTTP_OFF (no ip http server)
+Value Filldown HTTPS_ON (ip http secure-server)
+Value Filldown HTTPS_OFF (no ip http secure-server)
+Value Filldown BANNER_LOGIN (banner login)
+Value Filldown NTP_AUTH (ntp authenticate)
+Value Filldown LOGGING_BUFFERED (logging buffered)
+Value List NTP_SERVER (\S+)
+Value List SNMP_COMMUNITY (\S+)
+Value Filldown SNMP_HOST_VERSION (\S+)
+Value Filldown SNMP_V3 (snmp-server group \S+ v3)
+Value List SYSLOG_HOST (\S+)
+
+Start
+  ^hostname\s+${HOSTNAME}
+  ^\s*${PASSWORD_ENCRYPTION_ON}\s*$$
+  ^\s*${PASSWORD_ENCRYPTION_OFF}\s*$$
+  ^ip ssh version\s+${SSH_VERSION}
+  ^\s*access-class\s+${MGMT_ACL}\s+in
+  ^\s*transport input\s+${TELNET_TRANSPORT}\s*$$
+  ^${HTTP_ON}\s*$$
+  ^${HTTP_OFF}\s*$$
+  ^${HTTPS_ON}\s*$$
+  ^${HTTPS_OFF}\s*$$
+  ^${BANNER_LOGIN}
+  ^${NTP_AUTH}\s*$$
+  ^ntp server\s+${NTP_SERVER}
+  ^${LOGGING_BUFFERED}\s+\d+\s*$$
+  ^logging host\s+${SYSLOG_HOST}
+  ^snmp-server community\s+${SNMP_COMMUNITY}
+  ^snmp-server host\s+\S+\s+version\s+${SNMP_HOST_VERSION}
+  ^${SNMP_V3}

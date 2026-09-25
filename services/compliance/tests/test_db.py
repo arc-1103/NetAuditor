@@ -50,6 +50,8 @@ async def sqlite_session(monkeypatch):
                     baseline_snapshot TEXT,
                     mean_logprob      REAL,
                     reverse_translation_fidelity REAL,
+                    parser_agreement  REAL,
+                    deterministic_baseline TEXT,
                     created_at        TEXT,
                     updated_at        TEXT
                 )
@@ -207,8 +209,8 @@ async def test_save_findings_records_immutable_provenance_and_device_metadata(sq
             "config_sha256": "b" * 64,
         },
     }
-    await db.save_findings(RUN_ID, [_finding("CIS-NET-1.1.1")], baseline=baseline, framework="CIS")
-    await db.save_findings(RUN_ID, [], baseline=baseline, framework="CIS")
+    await db.save_findings(RUN_ID, [_finding("CIS-NET-1.1.1")], baseline=baseline, framework="CIS", parser_agreement=0.75)
+    await db.save_findings(RUN_ID, [], baseline=baseline, framework="CIS", parser_agreement=0.75)
 
     async with sqlite_session() as session:
         history = (await session.execute(text("SELECT * FROM audit_evaluations"))).mappings().all()
@@ -219,6 +221,42 @@ async def test_save_findings_records_immutable_provenance_and_device_metadata(sq
     assert len(history[0]["baseline_sha256"]) == 64
     assert run["detected_vendor"] == "cisco"
     assert run["parsing_confidence"] == 0.96
+    assert run["parser_agreement"] == 0.75
+
+
+async def test_save_findings_defaults_parser_agreement_to_none(sqlite_session):
+    """A caller that never passed parser_agreement (e.g. an older Parsing
+    build, or the deterministic cross-check disabled) must not silently
+    look like a confirmed 0.0/1.0 score."""
+    baseline = {"schema_version": "1.0.0", "device": {"detected_vendor": "cisco", "config_sha256": "c" * 64}}
+    await db.save_findings(RUN_ID, [], baseline=baseline, framework="CIS")
+
+    run = await db.get_audit_run(RUN_ID)
+
+    assert run["device"]["parser_agreement"] is None
+
+
+async def test_get_trust_data_returns_both_baselines(sqlite_session):
+    baseline = {
+        "schema_version": "1.0.0",
+        "device": {"detected_vendor": "cisco", "config_sha256": "d" * 64},
+        "telnet": {"enabled": "DISABLED"},
+    }
+    deterministic_baseline = {"telnet": {"enabled": "ENABLED"}}
+    await db.save_findings(
+        RUN_ID, [], baseline=baseline, framework="CIS",
+        parser_agreement=0.0, deterministic_baseline=deterministic_baseline,
+    )
+
+    data = await db.get_trust_data(RUN_ID)
+
+    assert data["baseline_snapshot"]["telnet"]["enabled"] == "DISABLED"
+    assert data["deterministic_baseline"] == {"telnet": {"enabled": "ENABLED"}}
+    assert data["parser_agreement"] == 0.0
+
+
+async def test_get_trust_data_of_unknown_run_is_none(sqlite_session):
+    assert await db.get_trust_data("22222222-2222-2222-2222-222222222222") is None
 
 
 async def test_get_audit_run_returns_run_with_findings(sqlite_session):

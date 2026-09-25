@@ -107,7 +107,7 @@ async def test_vendor_context_is_detected_once_and_passed_to_all_chunks(monkeypa
     assert all("Detected vendor: cisco" in prompt for prompt, *_ in fake_slm.prompts)
     assert sent[0][0][0] == "compliance.evaluate_baseline"
     payload = sent[0][1]["args"][0]
-    assert set(payload) == {"audit_run_id", "framework", "baseline", "source_text"}
+    assert set(payload) == {"audit_run_id", "framework", "baseline", "source_text", "parser_agreement", "deterministic_baseline"}
     assert payload["audit_run_id"] == make_job()["job_id"]
     assert payload["framework"] == "CIS"
     assert payload["baseline"]["device"]["config_sha256"] == make_job()["file_hash"]
@@ -398,3 +398,69 @@ async def test_rag_failure_does_not_block_parsing(monkeypatch):
     )
     assert result["status"] == "submitted"
     assert sent
+
+
+# ── Deterministic (TextFSM) cross-check wiring — docs/action.md Phase 2 ─
+class SSHClaimingSLM(FakeSLM):
+    """Claims a specific ssh.version in its extraction, so agreement with
+    app/deterministic_extractor.py's independent read of the same
+    "ip ssh version 2" line in make_job()'s chunk 0 can be controlled."""
+
+    def __init__(self, claimed_version, **kwargs):
+        super().__init__(**kwargs)
+        self.claimed_version = claimed_version
+
+    async def generate(self, prompt, config_text, schema, *, device_context):
+        self.prompts.append((prompt, device_context.vendor, device_context.os, config_text))
+        return SLMResult(
+            value={
+                "schema_version": "1.0.0",
+                "device": {"parsing_confidence": self.confidence},
+                "ssh": {"enabled": True, "version": self.claimed_version},
+            },
+            mean_logprob=self.mean_logprob,
+        )
+
+
+@pytest.mark.asyncio
+async def test_parser_agreement_is_1_when_slm_matches_the_deterministic_read(monkeypatch):
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *args, **kwargs: None)
+
+    result = await worker._process_config(
+        make_job(), slm_client=SSHClaimingSLM(claimed_version="2"),
+        rag_provider=FakeRAG(), vendor_fingerprint_provider=EmptyVendorFingerprintProvider(),
+    )
+
+    assert result["parser_agreement"] == 1.0
+    assert not any(c.startswith("deterministic:") for c in result["conflicts"])
+
+
+@pytest.mark.asyncio
+async def test_parser_agreement_flags_a_genuine_disagreement(monkeypatch):
+    """make_job()'s chunk 0 literally says "ip ssh version 2" — an SLM
+    claiming version 1 is a real, checkable disagreement."""
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *args, **kwargs: None)
+
+    result = await worker._process_config(
+        make_job(), slm_client=SSHClaimingSLM(claimed_version="1"),
+        rag_provider=FakeRAG(), vendor_fingerprint_provider=EmptyVendorFingerprintProvider(),
+    )
+
+    assert result["parser_agreement"] is not None
+    assert result["parser_agreement"] < 1.0
+    assert "deterministic:ssh.version" in result["conflicts"]
+
+
+@pytest.mark.asyncio
+async def test_parser_agreement_is_none_when_crosscheck_is_disabled(monkeypatch):
+    from app.deterministic_extractor import EmptyDeterministicExtractorProvider
+
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *args, **kwargs: None)
+
+    result = await worker._process_config(
+        make_job(), slm_client=SSHClaimingSLM(claimed_version="2"),
+        rag_provider=FakeRAG(), vendor_fingerprint_provider=EmptyVendorFingerprintProvider(),
+        deterministic_extractor_provider=EmptyDeterministicExtractorProvider(),
+    )
+
+    assert result["parser_agreement"] is None

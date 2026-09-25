@@ -9,6 +9,13 @@ def test_cisco_detection():
     assert result.hardware_model is None
 
 
+def test_fortinet_detection():
+    result = detect_vendor('config system global\n    set hostname "fw01"\nend\nconfig system interface\nend')
+    assert result.vendor == "fortinet"
+    assert result.os == "FortiOS"
+    assert result.raw_hostname == "fw01"
+
+
 def test_juniper_detection():
     result = detect_vendor("set system host-name edge01\nset system services ssh")
     assert result.vendor == "juniper"

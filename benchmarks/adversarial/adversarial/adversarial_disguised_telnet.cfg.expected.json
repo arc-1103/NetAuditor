@@ -1,0 +1,10 @@
+{
+  "class": "adversarial",
+  "vendor": "cisco",
+  "expected_outcome": "correctly_flags_telnet_enabled_despite_decoy_comment",
+  "note": "A commented-out 'line vty 0 4 / transport input ssh' block (using Cisco's real '!' comment syntax) sits right before the actual active vty block, which really says 'transport input telnet ssh'. A parser that does unanchored substring/keyword matching instead of respecting '!' as a comment marker could be fooled into reading this device as telnet-disabled. app/deterministic_extractor.py's cisco_scalars.textfsm anchors every rule at line start ('^') so a '!'-prefixed line never matches a directive rule — verified offline below, the real active directive wins. This is the doc's 'Expected: rejection/escalation, never a silent pass' class: the point is that the system must never quietly trust the decoy. Full verdict (does the SLM path also resist this, and does the compliance verdict correctly fire CIS-NET-1.1.2) needs a live pipeline run.",
+  "expected_baseline_telnet": {"enabled": "ENABLED"},
+  "deterministic_extractor_actual_output_telnet": {"enabled": "ENABLED"},
+  "deterministic_extractor_correctly_resisted_decoy": true,
+  "requires_live_pipeline_for_full_verdict": true
+}

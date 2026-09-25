@@ -11,6 +11,8 @@ Payload (Parsing lane sends this once a baseline passes Pydantic validation):
       "framework":    "CIS",            # optional, defaults to DEFAULT_FRAMEWORK
       "baseline":     { ... },          # contracts/security_baseline.schema.json
       "source_text":  "..."             # optional sanitized evidence
+      "parser_agreement": 0.0-1.0|null  # optional, see app/agreement.py in Parsing
+      "deterministic_baseline": { ... } # optional partial baseline, see app/deterministic_extractor.py in Parsing
     }
 
 Parsing does not have to wait for this lane to be up — Celery queues the task.
@@ -58,6 +60,8 @@ def evaluate_baseline(job: dict) -> dict:
             job.get("framework"),
             audit_run_id,
             source_text=job.get("source_text"),
+            parser_agreement=job.get("parser_agreement"),
+            deterministic_baseline=job.get("deterministic_baseline"),
         )
     )
     return result["summary"]

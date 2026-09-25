@@ -1,0 +1,30 @@
+Value Filldown HOSTNAME (\S+)
+Value Filldown TELNET_ON (ip telnet server)
+Value Filldown TELNET_OFF (no ip telnet server)
+Value Filldown HTTP_ON (protocol http)
+Value Filldown HTTP_OFF (no protocol http)
+Value Filldown HTTPS_ON (protocol https)
+Value Filldown SNMP_HOST_VERSION (\S+)
+Value Filldown SNMP_V3 (snmp-server group \S+ v3)
+Value Filldown NTP_AUTH (ntp authenticate)
+Value Filldown LOGGING_BUFFERED (logging buffered)
+Value Filldown BANNER_LOGIN (banner login)
+Value List SNMP_COMMUNITY (\S+)
+Value List NTP_SERVER (\S+)
+Value List SYSLOG_HOST (\S+)
+
+Start
+  ^hostname\s+${HOSTNAME}
+  ^${TELNET_OFF}\s*$$
+  ^${TELNET_ON}\s*$$
+  ^\s+${HTTP_OFF}\s*$$
+  ^\s+${HTTP_ON}\s*$$
+  ^\s+${HTTPS_ON}\s*$$
+  ^snmp-server community\s+${SNMP_COMMUNITY}
+  ^snmp-server host\s+\S+\s+version\s+${SNMP_HOST_VERSION}
+  ^${SNMP_V3}
+  ^${NTP_AUTH}\s*$$
+  ^ntp server\s+${NTP_SERVER}
+  ^${LOGGING_BUFFERED}\s+\d+\s*$$
+  ^logging host\s+${SYSLOG_HOST}
+  ^${BANNER_LOGIN}

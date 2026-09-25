@@ -263,12 +263,28 @@ async def get_findings(audit_run_id: str) -> list[dict]:
 
 
 async def get_run_parsing_confidence(audit_run_id: str) -> float | None:
-    """app/decision.py's parser_agreement signal — see decision_table.yaml's
-    header comment for why this is a proxy, not the doc's literal
-    dual-parser-agreement value."""
+    """The SLM's own self-reported confidence — app/decision.py's fallback
+    when get_run_parser_agreement() below is None (an unsupported vendor,
+    or a Parsing build from before docs/action.md Phase 2 shipped)."""
     async with async_session() as session:
         row = (await session.execute(
             text("SELECT parsing_confidence FROM audit_runs WHERE id=:run_id"),
+            {"run_id": audit_run_id},
+        )).first()
+    return row[0] if row else None
+
+
+async def get_run_parser_agreement(audit_run_id: str) -> float | None:
+    """app/decision.py's real parser_agreement signal — docs/action.md
+    Phase 2's swap of the proxy decision_table.yaml's header comment used
+    to describe. Independent dual-parser agreement (Parsing's SLM vs. its
+    TextFSM cross-check, services/parsing/app/agreement.py), not the SLM's
+    own self-reported number. NULL when Parsing's deterministic extractor
+    never covered this device's vendor — see get_run_parsing_confidence
+    for the fallback that case uses."""
+    async with async_session() as session:
+        row = (await session.execute(
+            text("SELECT parser_agreement FROM audit_runs WHERE id=:run_id"),
             {"run_id": audit_run_id},
         )).first()
     return row[0] if row else None

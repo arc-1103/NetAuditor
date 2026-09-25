@@ -1,0 +1,8 @@
+Value Filldown ACL_NAME (\S+)
+Value ACTION (permit|deny)
+Value NETWORK (any|\S+ \S+)
+
+Start
+  ^ip access-list standard\s+${ACL_NAME}
+  ^\s+${ACTION}\s+${NETWORK}\s*(?:log)?\s*$$ -> Record
+  ^! -> Clearall

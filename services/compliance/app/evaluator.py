@@ -84,6 +84,8 @@ async def evaluate_baseline(
     source_text: str | None = None,
     graph: graph_client.TopologyGraphProvider | None = None,
     anomaly: anomaly_client.AnomalyDetectionProvider | None = None,
+    parser_agreement: float | None = None,
+    deterministic_baseline: dict | None = None,
 ) -> dict:
     """Evaluate one normalized baseline and return findings + summary.
 
@@ -134,6 +136,8 @@ async def evaluate_baseline(
             findings,
             baseline=baseline,
             framework=(framework or opa_client.DEFAULT_FRAMEWORK).upper(),
+            parser_agreement=parser_agreement,
+            deterministic_baseline=deterministic_baseline,
         )
         if device_id:
             await db.save_anomaly(audit_run_id, device_id, anomaly_result)

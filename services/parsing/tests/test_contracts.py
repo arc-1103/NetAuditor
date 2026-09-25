@@ -120,4 +120,6 @@ async def test_real_worker_pipeline_output_matches_actual_cross_lane_contract(mo
         "framework": "CIS",
         "baseline": baseline,
         "source_text": "\n".join(chunk["text"] for chunk in job["chunks"]),
+        "parser_agreement": result["parser_agreement"],
+        "deterministic_baseline": result["deterministic_baseline"],
     }], {"queue": "compliance"})]

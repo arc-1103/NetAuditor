@@ -12,7 +12,9 @@ from celery import Celery
 from schema.security_baseline import SecurityBaseline
 
 from . import db
+from .agreement import compute_agreement
 from .config import settings
+from .deterministic_extractor import DeterministicExtractorProvider, EmptyDeterministicExtractorProvider, TextFSMExtractor
 from .grammar_constraints import GrammarConstraints
 from .merge import merge_baselines
 from .models import DeviceContext, UnknownBlock
@@ -54,6 +56,9 @@ _rag: RAGContextProvider = LearningRAGContextProvider(
     ambiguous_max_distance=settings.rag_ambiguous_max_distance,
 )
 _vendor_fingerprint: VendorFingerprintProvider = LearningVendorFingerprintProvider(settings.learning_url)
+_deterministic_extractor: DeterministicExtractorProvider = (
+    TextFSMExtractor() if settings.enable_deterministic_crosscheck else EmptyDeterministicExtractorProvider()
+)
 _parse_cache: ParseCacheProvider = build_parse_cache_provider(
     enabled=settings.enable_parse_cache,
     redis_url=settings.parse_cache_redis_url,
@@ -282,8 +287,10 @@ async def _process_config(
     slm_client: OllamaSLMClient | None = None,
     rag_provider: RAGContextProvider | None = None,
     vendor_fingerprint_provider: VendorFingerprintProvider | None = None,
+    deterministic_extractor_provider: DeterministicExtractorProvider | None = None,
 ) -> dict[str, Any]:
     fingerprint_provider = vendor_fingerprint_provider or _vendor_fingerprint
+    det_provider = deterministic_extractor_provider or _deterministic_extractor
     validate_ingestion_job(job)
 
     device_context = detect_job_context(job["chunks"])
@@ -350,6 +357,21 @@ async def _process_config(
     merged.device.parsing_confidence = min(1.0, max(0.0, confidence))
     baseline_json = merged.model_dump(mode="json")
 
+    # Deterministic (TextFSM) cross-check — docs/action.md Phase 2,
+    # docs/Suggestions.md item 7. Independent of the SLM path and computed
+    # after parsing_confidence above, not folded into it: parser_agreement
+    # is a distinct signal (external agreement vs. self-reported
+    # confidence), not a redefinition of the existing one. Deterministic
+    # disagreements are appended to the same `conflicts` list merge_baselines
+    # already produces (distinguishable by their "deterministic:" prefix,
+    # see app/agreement.py) rather than a second parallel mechanism — but
+    # only after the confidence penalty above already used `conflicts`, so
+    # this cross-check can never retroactively change parsing_confidence.
+    source_text = "\n".join(chunk["text"] for chunk in job["chunks"])
+    deterministic_partial = det_provider.extract(source_text, device_context.vendor or "")
+    agreement_result = compute_agreement(baseline_json, deterministic_partial)
+    conflicts = [*conflicts, *agreement_result.disagreements]
+
     # Vendor identity is no longer a gate — an unrecognized vendor is not
     # the same thing as an unparseable one. Whether this device reaches
     # Compliance depends solely on whether the SLM's own extraction was
@@ -372,13 +394,21 @@ async def _process_config(
             "reason": "parsing_confidence_below_threshold",
             "unknown_blocks": [_unknown_to_dict(x) for x in unknown_blocks],
             "conflicts": conflicts,
+            "parser_agreement": agreement_result.agreement,
+            "deterministic_baseline": deterministic_partial,
         }
 
     compliance_payload = {
         "audit_run_id": job["job_id"],
         "framework": "CIS",
         "baseline": baseline_json,
-        "source_text": "\n".join(chunk["text"] for chunk in job["chunks"]),
+        "source_text": source_text,
+        "parser_agreement": agreement_result.agreement,
+        # docs/action.md Phase 3 (docs/Suggestions.md item 7's Trust Layer) —
+        # Compliance persists this alongside baseline_snapshot so it can be
+        # diffed on read (services/compliance/app/trust.py) without Parsing
+        # needing to retain any state itself.
+        "deterministic_baseline": deterministic_partial,
     }
 
     # Cross-lane communication remains Celery-only.
@@ -391,6 +421,8 @@ async def _process_config(
         "baseline": baseline_json,
         "unknown_blocks": [_unknown_to_dict(x) for x in unknown_blocks],
         "conflicts": conflicts,
+        "parser_agreement": agreement_result.agreement,
+        "deterministic_baseline": deterministic_partial,
     }
 
 

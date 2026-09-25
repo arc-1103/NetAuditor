@@ -50,6 +50,60 @@ def test_fleet_score_of_no_evaluated_runs_is_fully_compliant(client, monkeypatch
     assert resp.json() == {"devices_scored": 0, "fleet_score": 100}
 
 
+# ── POST /counterfactual ─────────────────────────────────────────────
+def test_counterfactual_diffs_two_evaluated_baselines(client, monkeypatch):
+    monkeypatch.setattr(
+        main.opa_client, "evaluate",
+        AsyncMock(side_effect=[
+            [{"control_id": "CIS-NET-1.1.2", "severity": "CRITICAL"}],  # current
+            [],  # proposed
+        ]),
+    )
+
+    resp = client.post("/counterfactual", json={
+        "current_baseline": {"device": {}}, "proposed_baseline": {"device": {}},
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["verdict"] == "SAFE"
+    assert body["violations_resolved"] == ["CIS-NET-1.1.2"]
+
+
+def test_counterfactual_surfaces_opa_failure_as_502(client, monkeypatch):
+    monkeypatch.setattr(main.opa_client, "evaluate", AsyncMock(side_effect=OPAEvaluationError("opa down")))
+
+    resp = client.post("/counterfactual", json={
+        "current_baseline": {"device": {}}, "proposed_baseline": {"device": {}},
+    })
+
+    assert resp.status_code == 502
+
+
+# ── GET /audit-runs/{id}/trust ──────────────────────────────────────
+def test_trust_view_diffs_the_two_baselines(client, monkeypatch):
+    monkeypatch.setattr(main.db, "get_trust_data", AsyncMock(return_value={
+        "baseline_snapshot": {"telnet": {"enabled": "DISABLED"}},
+        "deterministic_baseline": {"telnet": {"enabled": "ENABLED"}},
+        "parser_agreement": 0.0,
+    }))
+
+    resp = client.get(f"/audit-runs/{RUN_ID}/trust")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["fields"][0]["agree"] is False
+    assert body["parser_agreement"] == 0.0
+
+
+def test_trust_view_of_unknown_run_is_404(client, monkeypatch):
+    monkeypatch.setattr(main.db, "get_trust_data", AsyncMock(return_value=None))
+
+    resp = client.get(f"/audit-runs/{RUN_ID}/trust")
+
+    assert resp.status_code == 404
+
+
 # ── POST /reachability-diff ──────────────────────────────────────────
 def test_reachability_diff_flags_a_removed_permit_rule(client):
     entry = {"sequence": 10, "action": "permit", "protocol": "tcp", "source": "any", "destination": "10.0.0.0/24", "port": "443"}
@@ -84,7 +138,7 @@ def test_evaluate_passes_audit_run_id_through_for_persistence(client, monkeypatc
 
     client.post("/evaluate", json={"baseline": baseline, "framework": "CIS", "audit_run_id": RUN_ID})
 
-    spy.assert_awaited_once_with(baseline, "CIS", RUN_ID, source_text=None)
+    spy.assert_awaited_once_with(baseline, "CIS", RUN_ID, source_text=None, parser_agreement=None)
 
 
 def test_evaluate_without_audit_run_id_is_a_dry_run(client, monkeypatch, baseline):
@@ -93,7 +147,7 @@ def test_evaluate_without_audit_run_id_is_a_dry_run(client, monkeypatch, baselin
 
     client.post("/evaluate", json={"baseline": baseline})
 
-    spy.assert_awaited_once_with(baseline, None, None, source_text=None)
+    spy.assert_awaited_once_with(baseline, None, None, source_text=None, parser_agreement=None)
 
 
 def test_evaluate_rejects_unknown_framework_with_400(client, monkeypatch, baseline):

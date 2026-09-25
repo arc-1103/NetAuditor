@@ -45,6 +45,8 @@ async def save_findings(
     *,
     baseline: dict | None = None,
     framework: str = "CIS",
+    parser_agreement: float | None = None,
+    deterministic_baseline: dict | None = None,
 ) -> list[dict]:
     """Replace this run's findings and mark it EVALUATED, in one transaction.
 
@@ -149,7 +151,9 @@ async def save_findings(
                         UPDATE audit_runs SET detected_vendor=:vendor, detected_os=:detected_os,
                             parsing_confidence=:confidence, schema_version=:schema_version,
                             baseline_snapshot=:baseline, mean_logprob=:mean_logprob,
-                            reverse_translation_fidelity=:reverse_translation_fidelity
+                            reverse_translation_fidelity=:reverse_translation_fidelity,
+                            parser_agreement=:parser_agreement,
+                            deterministic_baseline=:deterministic_baseline
                             WHERE id=:run_id
                         """
                     ),
@@ -161,6 +165,8 @@ async def save_findings(
                         "baseline": canonical,
                         "mean_logprob": device.get("mean_logprob"),
                         "reverse_translation_fidelity": device.get("reverse_translation_fidelity"),
+                        "parser_agreement": parser_agreement,
+                        "deterministic_baseline": json.dumps(deterministic_baseline) if deterministic_baseline is not None else None,
                         "run_id": audit_run_id,
                     },
                 )
@@ -244,6 +250,24 @@ async def save_anomaly(audit_run_id: str, device_id: str, anomaly: dict) -> None
         )
 
 
+async def get_trust_data(audit_run_id: str) -> dict | None:
+    """docs/Suggestions.md item 7 / docs/action.md Phase 3 — the two raw
+    baselines app/trust.py diffs. None when the run doesn't exist."""
+    async with async_session() as session:
+        row = (await session.execute(
+            text("SELECT baseline_snapshot, deterministic_baseline, parser_agreement "
+                 "FROM audit_runs WHERE id=:run_id"),
+            {"run_id": audit_run_id},
+        )).mappings().first()
+    if row is None:
+        return None
+    value = dict(row)
+    for field in ("baseline_snapshot", "deterministic_baseline"):
+        if isinstance(value.get(field), str):
+            value[field] = json.loads(value[field])
+    return value
+
+
 async def get_audit_run(audit_run_id: str) -> dict | None:
     """The payload behind GET /api/audit-runs/{id} — run + its findings.
 
@@ -258,7 +282,7 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
                     SELECT id, file_hash, original_filename, storage_path,
                            uploaded_by, status, status_detail, detected_vendor,
                            detected_os, parsing_confidence, schema_version,
-                           mean_logprob, reverse_translation_fidelity,
+                           mean_logprob, reverse_translation_fidelity, parser_agreement,
                            created_at, updated_at
                     FROM audit_runs WHERE id = :run_id
                     """
@@ -305,6 +329,7 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
         "parsing_confidence": result.pop("parsing_confidence", None),
         "mean_logprob": result.pop("mean_logprob", None),
         "reverse_translation_fidelity": result.pop("reverse_translation_fidelity", None),
+        "parser_agreement": result.pop("parser_agreement", None),
     }
     return {
         **result,

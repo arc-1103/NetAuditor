@@ -1,0 +1,64 @@
+{
+  "detected_vendor": "cisco",
+  "expected_baseline": {
+    "aaa": {
+      "password_encryption": "ENABLED"
+    },
+    "banners": {
+      "login_banner_present": true
+    },
+    "crypto": {
+      "ike_policies": [
+        {
+          "authentication_method": "pre-share",
+          "dh_group": 2,
+          "encryption": "3DES",
+          "hash_algorithm": "MD5",
+          "policy_id": 10
+        }
+      ]
+    },
+    "device": {
+      "raw_hostname": "vpn-router-crypto-demo"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.72.10.30"
+      ]
+    },
+    "ntp": {
+      "authentication_enabled": true,
+      "enabled": true,
+      "servers": [
+        "10.72.10.20"
+      ]
+    },
+    "services": {
+      "http_server_enabled": "DISABLED"
+    },
+    "snmp": {
+      "enabled": true,
+      "version": "v3"
+    },
+    "ssh": {
+      "enabled": true,
+      "version": "2"
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    },
+    "topology": {
+      "interfaces": [
+        {
+          "description": "WAN-VPN",
+          "enabled": true,
+          "ip_address": "10.72.0.1",
+          "name": "GigabitEthernet0/0",
+          "subnet_mask": "255.255.255.252"
+        }
+      ]
+    }
+  },
+  "vendor": "cisco"
+}

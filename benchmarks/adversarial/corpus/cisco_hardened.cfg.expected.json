@@ -1,0 +1,88 @@
+{
+  "detected_vendor": "cisco",
+  "expected_baseline": {
+    "aaa": {
+      "password_encryption": "ENABLED"
+    },
+    "acl": {
+      "ingress_acl_applied": true,
+      "ingress_acl_name": "MANAGEMENT-ONLY",
+      "ingress_entries": [
+        {
+          "action": "permit",
+          "destination": "any",
+          "port": null,
+          "protocol": "ip",
+          "sequence": null,
+          "source": "10.20.10.0 0.0.0.255"
+        },
+        {
+          "action": "deny",
+          "destination": "any",
+          "port": null,
+          "protocol": "ip",
+          "sequence": null,
+          "source": "any"
+        }
+      ]
+    },
+    "banners": {
+      "login_banner_present": true
+    },
+    "crypto": {
+      "ike_policies": [
+        {
+          "authentication_method": "pre-share",
+          "dh_group": 14,
+          "encryption": "AES256",
+          "hash_algorithm": "SHA256",
+          "policy_id": 10
+        }
+      ]
+    },
+    "device": {
+      "raw_hostname": "branch-core-02"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.20.10.12"
+      ]
+    },
+    "ntp": {
+      "authentication_enabled": true,
+      "enabled": true,
+      "servers": [
+        "10.20.10.20"
+      ]
+    },
+    "services": {
+      "http_server_enabled": "DISABLED",
+      "https_server_enabled": "ENABLED"
+    },
+    "snmp": {
+      "enabled": true,
+      "version": "v3"
+    },
+    "ssh": {
+      "enabled": true,
+      "management_acl": "MANAGEMENT-ONLY",
+      "version": "2"
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    },
+    "topology": {
+      "interfaces": [
+        {
+          "description": "WAN uplink",
+          "enabled": true,
+          "ip_address": "10.20.0.5",
+          "name": "GigabitEthernet0/0",
+          "subnet_mask": "255.255.255.252"
+        }
+      ]
+    }
+  },
+  "vendor": "cisco"
+}

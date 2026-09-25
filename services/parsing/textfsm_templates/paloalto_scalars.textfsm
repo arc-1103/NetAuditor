@@ -1,0 +1,25 @@
+Value HOSTNAME (\S+)
+Value TELNET_DISABLE (yes|no)
+Value HTTP_DISABLE (yes|no)
+Value IKE_ENCRYPTION (\S+)
+Value IKE_HASH (\S+)
+Value NTP_SERVER (\S+)
+Value NTP_AUTH (symmetric-key)
+Value SNMP_VERSION (\S+)
+Value SNMP_COMMUNITY (\S+)
+Value SYSLOG_SERVER_IP (\S+)
+Value SYSLOG_DISABLE (yes)
+Value LOGIN_BANNER (.+)
+
+Start
+  ^set deviceconfig system hostname\s+${HOSTNAME}
+  ^set deviceconfig system service disable-telnet\s+${TELNET_DISABLE}
+  ^set deviceconfig system service disable-http\s+${HTTP_DISABLE}
+  ^set network ike crypto-profiles \S+ default encryption\s+${IKE_ENCRYPTION}\s*$$
+  ^set network ike crypto-profiles \S+ default hash\s+${IKE_HASH}\s*$$
+  ^set deviceconfig system ntp-servers primary-ntp-server ntp-server-address\s+${NTP_SERVER}
+  ^set deviceconfig system ntp-servers primary-ntp-server authentication-type\s+${NTP_AUTH}
+  ^set shared snmp-setting access-setting version\s+${SNMP_VERSION}(?:\s+community\s+${SNMP_COMMUNITY})?
+  ^set deviceconfig system syslog-setting server \S+ server\s+${SYSLOG_SERVER_IP}
+  ^set deviceconfig system syslog-setting disable\s+${SYSLOG_DISABLE}
+  ^set deviceconfig system login-banner\s+"${LOGIN_BANNER}"

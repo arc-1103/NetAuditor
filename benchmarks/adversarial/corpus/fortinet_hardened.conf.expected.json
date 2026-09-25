@@ -1,0 +1,36 @@
+{
+  "detected_vendor": "fortinet",
+  "expected_baseline": {
+    "banners": {
+      "login_banner_present": true
+    },
+    "crypto": {
+      "ike_policies": [
+        {
+          "authentication_method": null,
+          "dh_group": null,
+          "encryption": "AES256",
+          "hash_algorithm": "SHA256",
+          "policy_id": null
+        }
+      ]
+    },
+    "device": {
+      "raw_hostname": "edge-fw-02"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.30.10.30"
+      ]
+    },
+    "snmp": {
+      "enabled": true,
+      "version": "v3"
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    }
+  },
+  "vendor": "fortinet"
+}

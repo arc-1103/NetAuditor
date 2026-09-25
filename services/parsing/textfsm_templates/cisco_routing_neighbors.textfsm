@@ -1,0 +1,8 @@
+Value Filldown LOCAL_ASN (\d+)
+Value NEIGHBOR_IP (\S+)
+Value REMOTE_ASN (\d+)
+
+Start
+  ^router bgp\s+${LOCAL_ASN}
+  ^\s+neighbor\s+${NEIGHBOR_IP}\s+remote-as\s+${REMOTE_ASN} -> Record
+  ^! -> Clearall

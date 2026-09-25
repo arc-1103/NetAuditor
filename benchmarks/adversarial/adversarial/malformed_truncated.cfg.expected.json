@@ -1,0 +1,15 @@
+{
+  "class": "malformed",
+  "vendor": "cisco",
+  "expected_outcome": "schema_rejection_or_unknown_block",
+  "note": "File is truncated mid-directive ('ip address 10.91.0' with no mask). app/deterministic_extractor.py handles this gracefully by construction (TextFSM line matching simply doesn't match a truncated line, so ip_address/subnet_mask are correctly absent rather than garbage) — verified offline, see deterministic_extractor_actual_output below. The doc's 'Expected: rejection' class is really about the SLM path: does a truncated/corrupted chunk get flagged as an UnknownBlock (services/parsing/app/models.py) or cause a Pydantic SecurityBaseline validation failure, rather than the SLM silently hallucinating a plausible-looking but fabricated subnet mask. That verdict needs a live Parsing run (real or mock SLM) against this fixture — not computable from the deterministic extractor alone.",
+  "deterministic_extractor_actual_output": {
+    "device": {"raw_hostname": "branch-core-trunc"},
+    "aaa": {"password_encryption": "ENABLED"},
+    "banners": {"login_banner_present": false},
+    "ntp": {"authentication_enabled": false},
+    "logging": {"syslog_enabled": false},
+    "topology": {"interfaces": [{"name": "GigabitEthernet0/0", "ip_address": null, "subnet_mask": null, "description": "WAN uplink", "enabled": true}]}
+  },
+  "requires_live_pipeline_for_full_verdict": true
+}

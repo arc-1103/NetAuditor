@@ -20,6 +20,17 @@ PATTERNS = [
         ),
     ),
     (
+        "fortinet",
+        "FortiOS",
+        0.96,
+        (
+            r"(?im)^\s*config\s+system\s+global",
+            r"(?im)^\s*config\s+system\s+interface",
+            r"(?im)^\s*config\s+vpn\s+ipsec\s+phase1-interface",
+            r"(?im)^\s*set\s+hostname\s+\S+",
+        ),
+    ),
+    (
         "juniper",
         "JunOS",
         0.97,
@@ -136,6 +147,7 @@ def _extract_version(text: str, vendor: str) -> str | None:
 def _extract_hostname(text: str, vendor: str) -> str | None:
     patterns = {
         "cisco": r"(?im)^\s*hostname\s+(\S+)",
+        "fortinet": r'(?im)^\s*set\s+hostname\s+"?([^"\s]+)"?',
         "juniper": r"(?im)^\s*set\s+system\s+host-name\s+(\S+)",
         "paloalto": r"(?im)^\s*set\s+deviceconfig\s+system\s+hostname\s+(\S+)",
         "arista": r"(?im)^\s*hostname\s+(\S+)",

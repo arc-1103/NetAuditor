@@ -12,14 +12,16 @@
 version: "1.0.0"
 
 # app/decision.py's inputs, and where they really come from today:
-#   parser_agreement — 0..1. The doc's real signal is independent dual-parser
-#     agreement (e.g. SLM vs. TextFSM); that cross-check isn't built yet
-#     (docs/ArchitecturalChanges.md §3 tracks it as unbuilt). Until it lands,
-#     this is proxied by audit_runs.parsing_confidence, the SLM's own
-#     single-model confidence — a materially weaker signal than true
-#     agreement between two independent parsers. Swap the proxy in
-#     app/decision.py when the real cross-check ships; these thresholds
-#     don't need to change.
+#   parser_agreement — 0..1. docs/action.md Phase 2 shipped the real
+#     independent dual-parser agreement signal: Parsing's SLM extraction vs.
+#     its TextFSM cross-check (services/parsing/app/agreement.py), stored as
+#     audit_runs.parser_agreement and read via app/db.get_run_parser_agreement
+#     (see app/main.py's _resolve_parser_agreement). It's NULL for a vendor
+#     the TextFSM cross-check doesn't cover yet (services/parsing/textfsm_templates/
+#     lists what's covered) — _resolve_parser_agreement falls back to
+#     audit_runs.parsing_confidence (the SLM's own single-model confidence,
+#     a materially weaker signal) only in that case, so an uncovered vendor
+#     degrades gracefully instead of reading as 0 and being blocked outright.
 #   blast_radius — count of devices in the finding's GraphRAG blast_radius
 #     list (services/compliance/app/graph_client.py).
 #   risk — LOW/MEDIUM/HIGH, derived from the finding's CIS severity

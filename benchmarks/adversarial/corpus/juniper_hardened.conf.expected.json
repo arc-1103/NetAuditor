@@ -1,0 +1,41 @@
+{
+  "detected_vendor": "juniper",
+  "expected_baseline": {
+    "aaa": {
+      "password_encryption": "ENABLED"
+    },
+    "banners": {
+      "login_banner_present": true
+    },
+    "device": {
+      "raw_hostname": "edge-router-jnpr-02"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.40.10.30"
+      ]
+    },
+    "ntp": {
+      "authentication_enabled": true,
+      "enabled": true,
+      "servers": [
+        "10.40.10.20"
+      ]
+    },
+    "services": {
+      "http_server_enabled": "DISABLED"
+    },
+    "snmp": {
+      "enabled": true,
+      "version": "v3"
+    },
+    "ssh": {
+      "enabled": true
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    }
+  },
+  "vendor": "juniper"
+}

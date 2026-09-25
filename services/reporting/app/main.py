@@ -113,9 +113,10 @@ async def executive_report():
 
 @app.get("/provenance/{audit_run_id}/{control_id}")
 async def provenance(audit_run_id: str, control_id: str):
-    """docs/Additional-Features.md §6: "full provenance chain for any
-    single finding, linked by ID"."""
-    return {"audit_run_id": audit_run_id, "control_id": control_id, "events": await db.get_provenance_chain(audit_run_id, control_id)}
+    """docs/Additional-Features.md §6 / docs/Suggestions.md item 5: "full
+    provenance chain for any single finding, linked by ID". See
+    app/db.get_provenance_chain."""
+    return await db.get_provenance_chain(audit_run_id, control_id)
 
 
 @app.get("/reports/{audit_run_id}/cef", response_class=PlainTextResponse)

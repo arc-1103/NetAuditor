@@ -44,6 +44,11 @@ class Settings:
     reverse_translation_fidelity_threshold: float = float(
         os.getenv("REVERSE_TRANSLATION_FIDELITY_THRESHOLD", "0.7")
     )
+    # Deterministic (TextFSM) cross-check (app/deterministic_extractor.py,
+    # docs/action.md) — independent of the SLM path entirely, so disabling
+    # it only removes the parser_agreement signal, never changes parsing
+    # itself.
+    enable_deterministic_crosscheck: bool = _bool("ENABLE_DETERMINISTIC_CROSSCHECK", True)
 
 
 settings = Settings()

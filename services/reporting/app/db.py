@@ -128,20 +128,55 @@ async def get_ledger_events(event_types: tuple[str, ...]) -> list[dict]:
     return events
 
 
-async def get_provenance_chain(audit_run_id: str, control_id: str) -> list[dict]:
-    """docs/Additional-Features.md §6's "full provenance chain for any
-    single finding, linked by ID" — every ledger_events row for this
-    (run, control) pair, in order."""
+async def get_provenance_chain(audit_run_id: str, control_id: str) -> dict:
+    """docs/Additional-Features.md §6 / docs/Suggestions.md item 5: "full
+    provenance chain for any single finding, linked by ID" — every field
+    item 5 names (framework control, policy version, evidence/raw config
+    line, config hash, remediation, preflight result, who approved),
+    composed from the four tables that each already own one piece of it,
+    plus the ledger's own event-by-event trail. Nothing new is computed
+    here; this is a join, not a new source of truth."""
     async with async_session() as session:
-        rows = (await session.execute(text(
+        finding = (await session.execute(text(
+            "SELECT control_id, framework, title, status, severity, evidence, remediation, "
+            "risk_score, blast_radius, source_lines FROM compliance_findings "
+            "WHERE audit_run_id=:run_id AND control_id=:control_id"
+        ), {"run_id": audit_run_id, "control_id": control_id})).mappings().first()
+        evaluation = (await session.execute(text(
+            "SELECT framework, policy_bundle_version, schema_version, baseline_sha256, evaluated_at "
+            "FROM audit_evaluations WHERE audit_run_id=:run_id ORDER BY evaluated_at DESC LIMIT 1"
+        ), {"run_id": audit_run_id})).mappings().first()
+        proposal = (await session.execute(text(
+            "SELECT template_name, script, source, preflight_status, risk_flags, decision_action, "
+            "decision_ruleset_version, risk_tier, blast_radius_count, approval_status, approved_by, "
+            "approval_comment, approved_at, rollback_status FROM remediation_proposals "
+            "WHERE audit_run_id=:run_id AND control_id=:control_id"
+        ), {"run_id": audit_run_id, "control_id": control_id})).mappings().first()
+        events = (await session.execute(text(
             "SELECT event_type, actor, ruleset_version, payload, created_at FROM ledger_events "
             "WHERE audit_run_id=:run_id AND control_id=:control_id ORDER BY created_at"
         ), {"run_id": audit_run_id, "control_id": control_id})).mappings().all()
-    events = [_jsonable(r) for r in rows]
+
+    events = [_jsonable(r) for r in events]
     for event in events:
         if isinstance(event.get("payload"), str):
             event["payload"] = json.loads(event["payload"])
-    return events
+
+    result = {
+        "audit_run_id": audit_run_id,
+        "control_id": control_id,
+        "finding": _jsonable(finding) if finding else None,
+        "policy": _jsonable(evaluation) if evaluation else None,
+        "remediation": _jsonable(proposal) if proposal else None,
+        "events": events,
+    }
+    if result["finding"]:
+        for field in ("blast_radius", "source_lines"):
+            if isinstance(result["finding"].get(field), str):
+                result["finding"][field] = json.loads(result["finding"][field])
+    if result["remediation"] and isinstance(result["remediation"].get("risk_flags"), str):
+        result["remediation"]["risk_flags"] = json.loads(result["remediation"]["risk_flags"])
+    return result
 
 
 async def record_report(audit_run_id: str, path: str, generated_by: str) -> None:

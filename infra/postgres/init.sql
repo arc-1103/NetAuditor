@@ -39,6 +39,13 @@ CREATE TABLE IF NOT EXISTS audit_runs (
     detected_vendor   TEXT,
     detected_os       TEXT,
     parsing_confidence DOUBLE PRECISION,
+    -- Deterministic-vs-SLM agreement (docs/action.md Phase 2,
+    -- docs/Suggestions.md item 7) — distinct from parsing_confidence, see
+    -- migration 0009's comment.
+    parser_agreement  DOUBLE PRECISION,
+    -- The deterministic cross-check's own partial extraction (see migration
+    -- 0010) — app/trust.py diffs this against baseline_snapshot on read.
+    deterministic_baseline JSONB,
     schema_version    TEXT,
     baseline_snapshot JSONB,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),

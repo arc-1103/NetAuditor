@@ -149,6 +149,15 @@ def test_get_audit_run_proxies_to_compliance(client, fake_proxy):
     assert call["url"].endswith("/audit-runs/run-1")
 
 
+def test_get_trust_view_proxies_to_compliance(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"parser_agreement": 1.0, "fields": []}))
+
+    resp = client.get("/api/audit-runs/run-1/trust")
+
+    assert resp.status_code == 200
+    assert last_proxy_call()["url"].endswith("/audit-runs/run-1/trust")
+
+
 def test_generate_report_proxies_to_reporting(client, fake_proxy):
     fake_proxy(FakeResponse(200, {"download_url": "https://example.local/report.pdf"}))
 
@@ -319,6 +328,17 @@ def test_reachability_diff_proxies_before_and_after(client, fake_proxy):
     call = last_proxy_call()
     assert call["url"].endswith("/reachability-diff")
     assert call["kwargs"]["json"] == {"before": {"ingress_entries": []}, "after": {"ingress_entries": []}}
+
+
+def test_counterfactual_proxies_both_baselines(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"verdict": "SAFE"}))
+
+    resp = client.post("/api/counterfactual", json={"current_baseline": {"device": {}}, "proposed_baseline": {"device": {}}})
+
+    assert resp.status_code == 200
+    call = last_proxy_call()
+    assert call["url"].endswith("/counterfactual")
+    assert call["kwargs"]["json"]["current_baseline"] == {"device": {}}
 
 
 def test_executive_report_proxies_to_reporting(client, fake_proxy):

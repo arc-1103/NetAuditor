@@ -4,6 +4,7 @@
 |---|---|---|---|---|
 | POST | /api/upload | JWT | AuditRun (status=INGESTED) | ingestion |
 | GET | /api/audit-runs/{id} | JWT | AuditRun + findings[] | compliance |
+| GET | /api/audit-runs/{id}/trust | JWT | Per-field SLM-vs-TextFSM agreement (docs/Suggestions.md item 7) | compliance |
 | POST | /api/reports/generate | JWT | PDF download link | reporting |
 | GET | /api/learning/queue | JWT | UnrecognizedBlock[] | learning |
 | POST | /api/learning/map | JWT | MappingConfirmation | learning |
@@ -17,6 +18,7 @@
 | GET | /api/reports/{id}/cef | JWT | CEF event stream | reporting |
 | GET | /api/fleet-score | JWT | FleetScore (docs/Additional-Features.md §1) | compliance |
 | POST | /api/reachability-diff | JWT | ACL diff / approximate blast radius (docs/Additional-Features.md §4) | compliance |
+| POST | /api/counterfactual | JWT | "What if I apply this fix?" before/after diff (docs/Suggestions.md item 3) | compliance |
 | GET | /api/executive-report | JWT | Fleet score, trend, top-5 exposure, MTTR (docs/Additional-Features.md §6) | reporting |
 | GET | /api/provenance/{run_id}/{control_id} | JWT | Ledger provenance chain for one finding (docs/Additional-Features.md §6) | reporting |
 | GET | /api/mttr | JWT | MTTR by severity tier (docs/Additional-Features.md §5) | reporting |

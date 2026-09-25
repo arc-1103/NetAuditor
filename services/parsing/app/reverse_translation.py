@@ -49,10 +49,14 @@ _TOP_LEVEL_KEYS_EXCLUDED_FROM_FIDELITY = {"topology"}
 _PLACEHOLDER_VALUES = {None, "", "UNKNOWN", "unknown", "NONE", "none"}
 
 
-def _leaf_facts(candidate: dict[str, Any]) -> set[tuple[str, str]]:
+def leaf_facts(candidate: dict[str, Any]) -> set[tuple[str, str]]:
     """Flatten a normalized candidate into (path, value) pairs. Order-
     independent (a reordered list isn't data loss) and blind to placeholder
-    values (the absence of a fact isn't a fact to lose)."""
+    values (the absence of a fact isn't a fact to lose).
+
+    Also used by app/agreement.py (docs/action.md Phase 2) to diff the SLM's
+    baseline against the deterministic cross-check's partial extraction —
+    one flattening/diffing approach, not two that could drift apart."""
     facts: set[tuple[str, str]] = set()
 
     def _walk(prefix: str, value: Any) -> None:
@@ -81,9 +85,9 @@ def compute_fidelity(original: dict[str, Any], roundtrip: dict[str, Any]) -> flo
     empty chunks included — there is nothing to lose) or the round trip is
     a perfect match. 0.0 when everything Agent A found vanished.
     """
-    original_facts = _leaf_facts(original)
+    original_facts = leaf_facts(original)
     if not original_facts:
         return 1.0
 
-    roundtrip_facts = _leaf_facts(roundtrip)
+    roundtrip_facts = leaf_facts(roundtrip)
     return len(original_facts & roundtrip_facts) / len(original_facts)

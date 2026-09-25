@@ -1,0 +1,13 @@
+Value POLICY_ID (\d+)
+Value ENCRYPTION (\S+(?: \d+)?)
+Value HASH (\S+)
+Value AUTH_METHOD (\S+)
+Value DH_GROUP (\d+)
+
+Start
+  ^crypto isakmp policy\s+${POLICY_ID}
+  ^\s+encryption\s+${ENCRYPTION}
+  ^\s+hash\s+${HASH}
+  ^\s+authentication\s+${AUTH_METHOD}
+  ^\s+group\s+${DH_GROUP}
+  ^! -> Record

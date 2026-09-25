@@ -34,11 +34,36 @@ def test_slm_defaults_to_real_mode_not_mock():
     assert main._slm.mock is False
 
 
+# ── parser_agreement resolution — docs/action.md Phase 2 ──────────────
+@pytest.mark.asyncio
+async def test_resolve_parser_agreement_prefers_the_real_signal(monkeypatch):
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=0.87))
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.5))
+
+    result = await main._resolve_parser_agreement(RUN_ID)
+
+    assert result == 0.87
+
+
+@pytest.mark.asyncio
+async def test_resolve_parser_agreement_falls_back_when_vendor_is_uncovered(monkeypatch):
+    """parser_agreement is None for a vendor Parsing's deterministic
+    cross-check doesn't cover yet — falls back to parsing_confidence
+    rather than reading as a confirmed 0."""
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.72))
+
+    result = await main._resolve_parser_agreement(RUN_ID)
+
+    assert result == 0.72
+
+
 @pytest.mark.asyncio
 async def test_generate_renders_preflights_and_persists(monkeypatch):
     save = AsyncMock()
     monkeypatch.setattr(main.db, "save_proposal", save)
     monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
     response = await request("POST", "/remediation/generate", json={"audit_run_id": RUN_ID, "finding": FINDING})
     assert response.status_code == 200
     assert response.json()["preflight"]["status"] == "SAFE"
@@ -51,6 +76,7 @@ async def test_generate_renders_preflights_and_persists(monkeypatch):
 async def test_generate_dispatches_a_remediation_proposed_webhook(monkeypatch):
     monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
     monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
     dispatch = AsyncMock()
     monkeypatch.setattr(main.webhooks, "dispatch", dispatch)
 
@@ -195,6 +221,7 @@ async def test_bulk_generation_uses_persisted_findings(monkeypatch):
     save = AsyncMock()
     monkeypatch.setattr(main.db, "save_proposal", save)
     monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
     response = await request("POST", f"/remediation/audit-runs/{RUN_ID}/generate")
     assert response.status_code == 200
     assert response.json()["generated"] == 1
@@ -239,6 +266,7 @@ async def test_missing_template_falls_back_to_agentic_rag(monkeypatch):
     save = AsyncMock()
     monkeypatch.setattr(main.db, "save_proposal", save)
     monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
     monkeypatch.setattr(main, "_manual_provider", FakeManualProvider(excerpts=["do the thing"]))
     monkeypatch.setattr(main, "_slm", FakeSLM())
 
@@ -268,6 +296,7 @@ async def test_agentic_rag_proposal_is_always_risk_flags_never_safe(monkeypatch)
     agentic-RAG proposal can never be approved through the normal flow."""
     monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
     monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
     monkeypatch.setattr(main, "_manual_provider", FakeManualProvider(excerpts=["grounded context"]))
     monkeypatch.setattr(main, "_slm", FakeSLM(response={"remediation_cli": "fix it", "rollback_cli": "unfix it"}))
 
@@ -290,6 +319,7 @@ async def test_agentic_rag_proposal_is_always_risk_flags_never_safe(monkeypatch)
 async def test_agentic_rag_proposal_flags_ungrounded_synthesis_and_missing_rollback(monkeypatch):
     monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
     monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
     monkeypatch.setattr(main, "_manual_provider", FakeManualProvider(excerpts=[]))
     monkeypatch.setattr(main, "_slm", FakeSLM(response={"remediation_cli": "fix it", "rollback_cli": ""}))
 

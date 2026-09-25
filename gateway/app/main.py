@@ -139,6 +139,12 @@ class ReachabilityDiffRequest(BaseModel):
     after: dict
 
 
+class CounterfactualRequest(BaseModel):
+    current_baseline: dict
+    proposed_baseline: dict
+    framework: str | None = None
+
+
 class RemediationGenerateRequest(BaseModel):
     audit_run_id: str
     finding: dict
@@ -187,6 +193,15 @@ async def upload(request: Request, file: UploadFile = File(...), user=Depends(re
 async def get_audit_run(run_id: str, user=Depends(require_reader)):
     async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
         resp = await client.get(f"{COMPLIANCE_URL}/audit-runs/{run_id}")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/audit-runs/{run_id}/trust")
+async def get_trust_view(run_id: str, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/audit-runs/{run_id}/trust")
     if resp.status_code >= 400:
         raise upstream_error(resp)
     return resp.json()
@@ -306,6 +321,15 @@ async def mttr(user=Depends(require_reader)):
 async def reachability_diff(body: ReachabilityDiffRequest, user=Depends(require_reader)):
     async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
         resp = await client.post(f"{COMPLIANCE_URL}/reachability-diff", json=body.model_dump())
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/counterfactual")
+async def counterfactual(body: CounterfactualRequest, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(f"{COMPLIANCE_URL}/counterfactual", json=body.model_dump())
     if resp.status_code >= 400:
         raise upstream_error(resp)
     return resp.json()

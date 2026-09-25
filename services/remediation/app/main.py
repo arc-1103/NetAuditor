@@ -49,14 +49,28 @@ AGENTIC_RAG_MANUAL_VERIFICATION_FLAG = (
 )
 
 
+async def _resolve_parser_agreement(audit_run_id: str) -> float | None:
+    """docs/action.md Phase 2: prefers the real parser_agreement
+    (independent TextFSM-vs-SLM agreement,
+    services/parsing/app/agreement.py) over the parsing_confidence proxy
+    decision_table.yaml used before that landed. Falls back to
+    parsing_confidence only when parser_agreement is None (Parsing's
+    deterministic extractor doesn't cover this device's vendor yet) — so a
+    device outside that coverage degrades to the old behavior rather than
+    reading as a confidence of 0 and getting blocked outright."""
+    parser_agreement = await db.get_run_parser_agreement(audit_run_id)
+    if parser_agreement is None:
+        parser_agreement = await db.get_run_parsing_confidence(audit_run_id)
+    return parser_agreement
+
+
 async def _decide(audit_run_id: str, finding) -> Decision:
     """docs/Additional-Features.md §2: classify every proposal against the
     confidence-weighted decision table, regardless of which path built it —
     an agentic-RAG proposal is already forced to RISK_FLAGS/un-approvable,
     but it still gets a citable classification for the ledger."""
-    parser_agreement = await db.get_run_parsing_confidence(audit_run_id)
     result = decision.decide(
-        parser_agreement=parser_agreement,
+        parser_agreement=await _resolve_parser_agreement(audit_run_id),
         blast_radius=decision.blast_radius_count(finding.blast_radius),
         severity=finding.severity,
     )
@@ -151,7 +165,7 @@ async def generate_for_run(audit_run_id: str):
     findings = await db.get_findings(audit_run_id)
     if not findings:
         raise HTTPException(status_code=404, detail="No remediable findings found for this audit run")
-    parser_agreement = await db.get_run_parsing_confidence(audit_run_id)
+    parser_agreement = await _resolve_parser_agreement(audit_run_id)
     proposals = []
     for finding in findings:
         try:

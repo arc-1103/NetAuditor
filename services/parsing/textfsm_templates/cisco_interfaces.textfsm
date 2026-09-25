@@ -1,0 +1,14 @@
+Value NAME (\S+)
+Value DESCRIPTION (.+)
+Value IP (\S+)
+Value MASK (\S+)
+Value NOSHUTDOWN (no shutdown)
+Value SHUTDOWN (shutdown)
+
+Start
+  ^interface\s+${NAME}
+  ^\s+description\s+${DESCRIPTION}\s*$$
+  ^\s+ip address\s+${IP}\s+${MASK}
+  ^\s+${NOSHUTDOWN}\s*$$
+  ^\s+${SHUTDOWN}\s*$$
+  ^! -> Record
