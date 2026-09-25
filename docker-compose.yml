@@ -260,9 +260,24 @@ services:
       - "${FRONTEND_PORT:-3000}:3000"
     restart: unless-stopped
 
+  nginx:
+    build:
+      context: .
+      dockerfile: infra/nginx/Dockerfile
+    depends_on:
+      gateway: {condition: service_healthy}
+      frontend: {condition: service_started}
+    networks: [audit-net]
+    ports:
+      - "${NGINX_PORT:-443}:443"
+    volumes:
+      - nginxcerts:/etc/nginx/certs
+    restart: unless-stopped
+
 volumes:
   pgdata:
   miniodata:
   reportdata:
   neo4jdata:
+  nginxcerts:
   chromadata:
