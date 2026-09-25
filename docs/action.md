@@ -2,52 +2,34 @@
 
 ## Status (last updated 2026-09-25)
 
-**Phases 1–3 are DONE, tested, and green.** Phase 4 (the adversarial
-benchmark itself — the actual "item 6" deliverable) has **not been
-started**. This is the next and only remaining work.
+**Phases 1–4 are all DONE, tested, and green.** Phase 4 (the adversarial
+benchmark itself — the actual "item 6" deliverable) was already built and
+committed (`80161c0`) by the time this status was next reviewed; only its
+`README.md` was still missing, and that has now been added.
 
 | Phase | Status | Evidence |
 |---|---|---|
 | 1 — Deterministic TextFSM extractor, all 5 vendors | ✅ Done | `services/parsing/app/deterministic_extractor.py` + `services/parsing/textfsm_templates/*.textfsm`; `services/parsing/tests/test_deterministic_extractor.py` (29 tests, validated against every real `demo/*.cfg` fixture) |
 | 2 — Agreement scoring, `merge.py`/`worker.py` wiring, `parser_agreement` persisted, remediation's decision-table proxy swapped | ✅ Done | `services/parsing/app/agreement.py`; `audit_runs.parser_agreement` (migration 0009); `services/remediation/app/main.py`'s `_resolve_parser_agreement` (real signal, falls back to `parsing_confidence` when the vendor is uncovered) |
 | 3 — Trust Layer view (`GET /api/audit-runs/{id}/trust`) | ✅ Done | `services/compliance/app/trust.py`; `audit_runs.deterministic_baseline` (migration 0010); gateway route wired and tested |
-| 4 — Adversarial Configuration Benchmark (item 6 itself) | ❌ **Not started** | Nothing built yet — see "What Phase 4 still needs" below |
+| 4 — Adversarial Configuration Benchmark (item 6 itself) | ✅ Done | `benchmarks/adversarial/corpus/` (17 golden fixtures), `benchmarks/adversarial/adversarial/` (Ambiguous/Malformed/Adversarial classes), `benchmarks/adversarial/run_adversarial_benchmark.py`, `benchmarks/adversarial/README.md` |
 
-**Full test count as of this status, all passing:**
-compliance 150, remediation 105, reporting 15 (logic/db; WeasyPrint-dependent
-tests can't run on this Windows machine, pre-existing gap), gateway 35,
-parsing 130+ (29 of them new this session). Nothing has been committed to
-git — that's a deliberate hold, not an oversight.
+**Verified 2026-09-25**: `pip install textfsm` (missing from the environment)
+then `python benchmarks/adversarial/run_adversarial_benchmark.py` exits 0 —
+`field_extraction_accuracy` and `vendor_detection_accuracy` both 1.0 across
+all 17 corpus fixtures, all 3 adversarial-class offline checks pass. One
+data bug found and fixed during this verification: the ambiguous fixture's
+`.expected.json` had an unscoped `deterministic_extractor_actual_output` key
+holding only a `telnet` fragment, so it was diffed against the full baseline
+and always failed; renamed to `deterministic_extractor_actual_output_telnet`
+to match the runner's own suffix-scoping logic and the fixture's stated
+intent (checking only `telnet.enabled`, per its `note` field).
 
-### What Phase 4 still needs (do this next)
-
-1. `benchmarks/adversarial/corpus/` — one `<fixture-name>.expected.json`
-   golden `SecurityBaseline`-level label per existing `demo/*.cfg` fixture
-   (16 files), for the fields each vendor's Phase 1 extractor covers. This
-   is mechanical (read the fixture, write down what a correct parse
-   returns) but has NOT been written yet — zero files exist in this
-   directory today.
-2. `benchmarks/adversarial/adversarial/` — new, hand-constructed fixtures
-   for the four test classes docs/Suggestions.md §6 names (Normal,
-   Ambiguous, Malformed, Adversarial) — see this doc's Phase 4 section
-   above for what each class means and an example of the "adversarial"
-   trap (a commented-out `no telnet` beside an active `telnet` enable).
-   None of these fixtures exist yet.
-3. `benchmarks/adversarial/run_adversarial_benchmark.py` — drives every
-   corpus fixture through Parsing (SLM + the now-working deterministic
-   extractor) and Compliance (OPA), scores: parser disagreement (already
-   computable via `app/agreement.py`), extraction accuracy (vs. the golden
-   corpus from step 1), schema rejection rate, policy-result deviation,
-   human-review rate. Not started.
-4. `benchmarks/adversarial/README.md` — states the corpus-scope caveat
-   (synthetic demo fixtures, not an independently-reviewed real-world
-   corpus — see this doc's "What this plan does NOT attempt" section).
-   Not started.
-5. False acceptance rate / "Unsafe Action Escape Rate" need the full
-   parse→compliance→remediation→decision pipeline run per adversarial
-   fixture — scaffold the hook in step 3's script but expect the real
-   numbers to land in a follow-up pass, per this doc's original Phase 4
-   note.
+False acceptance rate and "Unsafe Action Escape Rate" remain unavailable —
+`run_adversarial_benchmark.py`'s `score_live_results()` has the hook but
+needs Compliance's verdict and Remediation's decision captured alongside
+Parsing's output per fixture, which is a live-pipeline follow-up, not a
+gap in what Phase 4 itself built.
 
 ### Known follow-ups noted during Phases 1–3 (not blockers, just flagged)
 

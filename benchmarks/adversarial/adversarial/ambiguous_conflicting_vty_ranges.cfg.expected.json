@@ -3,6 +3,6 @@
   "vendor": "cisco",
   "expected_outcome": "human_review_or_flagged_ambiguity",
   "note": "Two vty ranges (0-4, 5-15) have genuinely different transport input policies. A single-scalar telnet.enabled field cannot represent both without loss. app/deterministic_extractor.py's cisco_scalars.textfsm uses Filldown (last-directive-wins), so it resolves this to telnet.enabled=ENABLED (the fail-safe direction: it correctly flags SOME telnet exposure) but silently loses that vty 0-4 is properly SSH-only. This is not scored as a pass/fail extraction accuracy case — there is no single correct scalar answer — it is a fixture for measuring whether the live pipeline's confidence/agreement signals (parsing_confidence, parser_agreement) drop enough on this input to actually route it toward human_review, per docs/Suggestions.md §6's 'Ambiguous configuration -> Expected human review' class.",
-  "deterministic_extractor_actual_output": {"telnet": {"enabled": "ENABLED"}},
+  "deterministic_extractor_actual_output_telnet": {"enabled": "ENABLED"},
   "requires_live_pipeline_for_full_verdict": true
 }
