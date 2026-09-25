@@ -72,7 +72,7 @@ async def save_proposal(proposal: dict) -> None:
             )
 
 
-async def approve(control_id: str, audit_run_id: str, approved: bool, user_id: str, comment: str | None, role: str) -> dict | None:
+async def approve(control_id: str, audit_run_id: str, approved: bool, user_id: str, comment: str | None, role: str, actor_type: str = "human") -> dict | None:
     """docs/Additional-Features.md §7's approval matrix, layered on top of
     §2's preflight/decision gates. A rejection (approved=False) is never
     role-restricted, matching the existing behavior — only an actual
@@ -98,6 +98,7 @@ async def approve(control_id: str, audit_run_id: str, approved: bool, user_id: s
         check_permission(
             role=role, decision_action=proposal["decision_action"] or "SINGLE_APPROVAL",
             risk=proposal["risk_tier"] or "HIGH", blast_radius_count=proposal["blast_radius_count"],
+            actor_type=actor_type,
         )
 
         prior_actors = set((await session.execute(

@@ -196,19 +196,29 @@ async def approve(
     body: ApprovalRequest,
     x_user_id: str | None = Header(default=None),
     x_user_role: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
 ):
     """docs/Additional-Features.md §7: role-scoped approval on top of §2's
     preflight/decision gates. x_user_role comes from the gateway (JWT's own
     role claim — see gateway/app/auth.py) the same way x_user_id already
     does; a caller that omits it (a direct, unauthenticated hop within the
     trusted network — see gateway's own comment on this same header
-    pattern) gets treated as the least-privileged role, not the most."""
+    pattern) gets treated as the least-privileged role, not the most.
+
+    docs/Suggestions.md item 1 (Agent Firewall): x_actor_type is the same
+    kind of trusted-network-internal header — defaults to "human" so every
+    existing caller (the gateway never sends this header today) is
+    unaffected, but any caller that identifies itself as anything else
+    ("ai", "agent", ...) is hard-rejected by approval_matrix.check_permission
+    regardless of role. This is a boundary for an AI/automation caller to
+    declare itself, not a way to detect one that lies — see
+    approval_matrix.check_permission's docstring."""
     if not body.audit_run_id:
         raise HTTPException(status_code=422, detail="audit_run_id is required to identify the proposal")
     try:
         result = await db.approve(
             control_id, body.audit_run_id, body.approved, x_user_id or "unknown", body.comment,
-            x_user_role or "auditor",
+            x_user_role or "auditor", x_actor_type or "human",
         )
     except ApprovalDenied as exc:
         raise HTTPException(status_code=403, detail=exc.reason) from exc

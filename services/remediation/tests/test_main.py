@@ -148,7 +148,7 @@ async def test_approve_is_audited(monkeypatch):
         headers={"X-User-Id": "admin-1", "X-User-Role": "admin"},
     )
     assert response.status_code == 200
-    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", "CAB-42", "admin")
+    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", "CAB-42", "admin", "human")
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,23 @@ async def test_approve_without_a_role_header_defaults_to_the_least_privileged_ro
         headers={"X-User-Id": "admin-1"},
     )
     assert response.status_code == 200
-    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", None, "auditor")
+    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", None, "auditor", "human")
+
+
+@pytest.mark.asyncio
+async def test_approve_passes_through_actor_type_header(monkeypatch):
+    """docs/Suggestions.md item 1: x-actor-type reaches db.approve unchanged
+    so approval_matrix.check_permission can reject a non-human actor —
+    see test_approval_matrix.py for that rejection logic itself."""
+    approve = AsyncMock(return_value={"audit_run_id": RUN_ID, "control_id": "CIS-IOS-1.1.1", "approval_status": "APPROVED"})
+    monkeypatch.setattr(main.db, "approve", approve)
+    response = await request("POST",
+        "/remediation/CIS-IOS-1.1.1/approve",
+        json={"approved": True, "audit_run_id": RUN_ID},
+        headers={"X-User-Id": "admin-1", "X-User-Role": "admin", "X-Actor-Type": "ai"},
+    )
+    assert response.status_code == 200
+    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", None, "admin", "ai")
 
 
 @pytest.mark.asyncio

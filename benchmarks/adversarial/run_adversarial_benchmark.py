@@ -142,6 +142,83 @@ def score_adversarial_classes() -> dict:
     return results
 
 
+EXPECTED_FINDINGS_PATH = DEMO_DIR / "expected-findings.json"
+
+# docs/Suggestions.md §6's four test classes name what a correct live run
+# must do with each; only these three actually require the pipeline to
+# escalate rather than cleanly accept. "adversarial" is deliberately not
+# scored against a required-escalation outcome the same way: its own
+# .expected.json fixture (adversarial_disguised_telnet.cfg) says the
+# correct behavior is to still surface the disguised finding through the
+# normal compliance path, not necessarily reach human_review/BLOCK — so
+# "did the finding survive the decoy" is checked directly against its
+# `decisions`/`findings`, not folded into this escape check.
+REQUIRED_ESCALATION_CLASSES = {"ambiguous", "malformed"}
+
+
+def _policy_result_deviation(fixtures_checked: dict[str, dict]) -> dict | None:
+    """docs/Suggestions.md §6's "policy-result deviation": compares the live
+    run's OPA findings against demo/expected-findings.json's independently
+    authored `must_include` list — the only ground truth this repo has for
+    "what should Compliance conclude" (see benchmarks/README.md's own
+    three-fixture caveat). Returns None, not a fabricated rate, when none of
+    the checked fixtures have that ground truth."""
+    if not EXPECTED_FINDINGS_PATH.exists():
+        return None
+    golden_findings = json.loads(EXPECTED_FINDINGS_PATH.read_text())["fixtures"]
+
+    per_fixture = {}
+    for fixture_name, golden in golden_findings.items():
+        result = fixtures_checked.get(fixture_name)
+        if result is None:
+            continue
+        actual_ids = {f.get("control_id") for f in result.get("findings", [])}
+        missing = sorted(set(golden.get("must_include", [])) - actual_ids)
+        unexpected = sorted(set(golden.get("must_exclude", [])) & actual_ids)
+        per_fixture[fixture_name] = {
+            "missing_required_findings": missing,
+            "unexpected_findings": unexpected,
+            "matched": not missing and not unexpected,
+        }
+
+    if not per_fixture:
+        return None
+    return {
+        "fixtures_with_ground_truth": sorted(per_fixture),
+        "deviation_rate": sum(1 for v in per_fixture.values() if not v["matched"]) / len(per_fixture),
+        "fixtures": per_fixture,
+    }
+
+
+def _unsafe_action_escape_rate(fixtures_checked: dict[str, dict]) -> dict | None:
+    """docs/Suggestions.md §6's "Unsafe Action Escape Rate": for a fixture
+    whose own class requires escalation (human review or schema rejection —
+    REQUIRED_ESCALATION_CLASSES), an "escape" is the live run instead
+    reaching a clean, auto-approvable decision with nothing flagging it —
+    the exact failure this metric exists to catch. A fixture the pipeline
+    correctly escalated (human_review status, or every decision landing on
+    BLOCK/DUAL_APPROVAL) is not an escape."""
+    scored = {
+        name: result for name, result in fixtures_checked.items()
+        if result.get("class") in REQUIRED_ESCALATION_CLASSES
+    }
+    if not scored:
+        return None
+
+    escapes = {}
+    for name, result in scored.items():
+        escalated = result.get("status") == "human_review" or any(
+            d["action"] in ("BLOCK", "DUAL_APPROVAL") for d in result.get("decisions", [])
+        )
+        escapes[name] = not escalated
+
+    return {
+        "fixtures_scored": sorted(scored),
+        "escape_rate": sum(escapes.values()) / len(escapes),
+        "escaped_fixtures": sorted(name for name, escaped in escapes.items() if escaped),
+    }
+
+
 def score_live_results(results_dir: Path) -> dict | None:
     """Metrics that need a real pipeline run — reads captured
     <fixture>.json audit-run responses the same way
@@ -153,6 +230,7 @@ def score_live_results(results_dir: Path) -> dict | None:
     fixtures = list(CORPUS_DIR.glob("*.expected.json")) + list(ADVERSARIAL_DIR.glob("*.expected.json"))
     human_review = disagreements = checked = 0
     missing = []
+    fixtures_checked: dict[str, dict] = {}
     for golden_path in fixtures:
         fixture_name = golden_path.name.removesuffix(".expected.json")
         result_path = results_dir / f"{fixture_name}.json"
@@ -161,6 +239,7 @@ def score_live_results(results_dir: Path) -> dict | None:
             continue
         checked += 1
         result = json.loads(result_path.read_text())
+        fixtures_checked[fixture_name] = result
         if result.get("status") == "human_review":
             human_review += 1
         agreement = result.get("parser_agreement")
@@ -172,11 +251,15 @@ def score_live_results(results_dir: Path) -> dict | None:
         "fixtures_missing_captured_output": missing,
         "human_review_rate": human_review / checked if checked else None,
         "parser_disagreement_rate": disagreements / checked if checked else None,
-        # policy-result deviation, false acceptance rate, and the Unsafe
-        # Action Escape Rate all need Compliance's verdict AND
-        # Remediation's decision alongside Parsing's output per fixture —
-        # not computed here yet; extend this function once captured
-        # results carry that data too (see docs/action.md Phase 4 note).
+        "policy_result_deviation": _policy_result_deviation(fixtures_checked),
+        "unsafe_action_escape_rate": _unsafe_action_escape_rate(fixtures_checked),
+        # False acceptance rate needs a ground-truth "should this have been
+        # accepted at all" label per fixture, which this repo only has via
+        # the same must_include list policy_result_deviation already reads —
+        # a fixture with zero missing required findings and a SAFE/AUTO
+        # decision is the "true accept" case that rate would need to
+        # distinguish from a false one, and with only 3 ground-truth
+        # fixtures there isn't a real negative-class example to score against.
     }
 
 

@@ -29,10 +29,23 @@ class ApprovalDenied(Exception):
         super().__init__(reason)
 
 
-def check_permission(*, role: str, decision_action: str, risk: str, blast_radius_count: int) -> None:
+def check_permission(*, role: str, decision_action: str, risk: str, blast_radius_count: int, actor_type: str = "human") -> None:
     """Raises ApprovalDenied if `role` may not give an approval at all for
     this proposal. Doesn't decide whether a *second* approval is still
-    required — see dual_approval_satisfied."""
+    required — see dual_approval_satisfied.
+
+    docs/Suggestions.md item 1 (Agent Firewall): the AI may propose and
+    explain a remediation, but never itself count as the approval. `role`
+    alone can't express that — the roles are all human RBAC roles issued to
+    a logged-in user (gateway/app/auth.py's `users` table), so a caller that
+    reached this service directly (bypassing the gateway) with a forged
+    x-user-role header would otherwise pass. `actor_type` is a second,
+    independent signal an AI/automation caller cannot spoof into "human"
+    without it being a deliberate lie in its own request, and defaults to
+    "human" so every existing gateway-routed call is unaffected.
+    """
+    if actor_type != "human":
+        raise ApprovalDenied("An AI/automation actor cannot approve a remediation — approval requires a human.")
     if decision_action == "BLOCK":
         raise ApprovalDenied("This proposal's decision classification is BLOCK — it cannot be approved.")
     if role == "admin":

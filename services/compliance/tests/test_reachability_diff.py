@@ -1,6 +1,6 @@
 """Unit tests for app.reachability_diff — docs/Additional-Features.md §4."""
 
-from app.reachability_diff import diff_acl
+from app.reachability_diff import diff_acl, diff_topology
 
 
 def _entry(action, protocol="tcp", source="any", destination="10.0.0.0/24", port="443", sequence=10):
@@ -76,3 +76,30 @@ def test_egress_changes_are_tracked_independently_of_ingress():
     assert result["ingress"]["acl_lines_touched"] == 0
     assert result["egress"]["acl_lines_touched"] == 1
     assert result["interfaces_touched"] == [{"side": "egress", "acl_name": None}]
+
+
+def test_diff_topology_reports_no_change_for_identical_topology():
+    topology = {"interfaces": [{"name": "Gi0/0", "ip_address": "10.0.0.1"}], "routing_neighbors": [{"protocol": "ospf", "neighbor_ip": "10.0.0.2"}]}
+
+    result = diff_topology(topology, topology)
+
+    assert result == {"interfaces_affected": 0, "routes_affected": 0}
+
+
+def test_diff_topology_counts_a_changed_interface():
+    before = {"interfaces": [{"name": "Gi0/0", "ip_address": "10.0.0.1"}], "routing_neighbors": []}
+    after = {"interfaces": [{"name": "Gi0/0", "ip_address": "10.0.0.9"}], "routing_neighbors": []}
+
+    result = diff_topology(before, after)
+
+    assert result["interfaces_affected"] == 2  # old record gone, new record present
+    assert result["routes_affected"] == 0
+
+
+def test_diff_topology_counts_an_added_route():
+    before = {"interfaces": [], "routing_neighbors": []}
+    after = {"interfaces": [], "routing_neighbors": [{"protocol": "bgp", "neighbor_ip": "10.0.0.5"}]}
+
+    result = diff_topology(before, after)
+
+    assert result["routes_affected"] == 1

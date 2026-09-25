@@ -162,11 +162,24 @@ async def get_provenance_chain(audit_run_id: str, control_id: str) -> dict:
         if isinstance(event.get("payload"), str):
             event["payload"] = json.loads(event["payload"])
 
+    policy = _jsonable(evaluation) if evaluation else None
+    if policy is not None:
+        # docs/Suggestions.md item 5 asks "which Rego rule?" as a field
+        # distinct from "which policy version?". This bundle
+        # (services/compliance/policies/generic/generic_level1.rego) has
+        # exactly one rule per control_id and no separate per-rule version —
+        # policy_bundle_version already versions the whole bundle, not
+        # individual rules within it. So rule_id is control_id, made
+        # explicit under the doc's own name rather than left as an implicit
+        # mapping the caller has to know; it is not a new, independently
+        # versioned identifier, since none exists in this bundle.
+        policy["rule_id"] = control_id
+
     result = {
         "audit_run_id": audit_run_id,
         "control_id": control_id,
         "finding": _jsonable(finding) if finding else None,
-        "policy": _jsonable(evaluation) if evaluation else None,
+        "policy": policy,
         "remediation": _jsonable(proposal) if proposal else None,
         "events": events,
     }

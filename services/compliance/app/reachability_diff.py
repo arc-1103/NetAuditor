@@ -60,6 +60,34 @@ def _diff_side(before_entries: list[dict], after_entries: list[dict]) -> dict:
     }
 
 
+def _interface_key(iface: dict) -> tuple:
+    return (iface.get("name"), iface.get("ip_address"), iface.get("subnet_mask"), iface.get("enabled", True))
+
+
+def _neighbor_key(neighbor: dict) -> tuple:
+    return (str(neighbor.get("protocol", "")).lower(), neighbor.get("neighbor_ip"))
+
+
+def diff_topology(before: dict, after: dict) -> dict:
+    """docs/Suggestions.md item 2's blast-radius mockup names "Interfaces
+    affected" and "Routes affected" alongside the ACL-level counts diff_acl
+    already produces. topology.interfaces/routing_neighbors
+    (contracts/security_baseline.schema.json) are the only pieces of a
+    SecurityBaseline that model those — this counts changed/added/removed
+    entries the same "before/after, caller supplies both sides" way diff_acl
+    already does, without standing up real topology simulation (Batfish or
+    the GraphRAG graph) just to produce a count."""
+    before_ifaces = {_interface_key(i) for i in before.get("interfaces", [])}
+    after_ifaces = {_interface_key(i) for i in after.get("interfaces", [])}
+    before_neighbors = {_neighbor_key(n) for n in before.get("routing_neighbors", [])}
+    after_neighbors = {_neighbor_key(n) for n in after.get("routing_neighbors", [])}
+
+    return {
+        "interfaces_affected": len(before_ifaces ^ after_ifaces),
+        "routes_affected": len(before_neighbors ^ after_neighbors),
+    }
+
+
 def diff_acl(before: dict, after: dict) -> dict:
     """before/after: ACLConfig-shaped dicts (ingress_entries/egress_entries
     lists of ACLEntry dicts, plus the *_acl_name/_acl_applied fields).

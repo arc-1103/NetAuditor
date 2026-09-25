@@ -79,3 +79,48 @@ def test_identical_baselines_are_safe_with_zero_delta():
     assert result["compliance_delta"] == 0
     assert result["violations_resolved"] == []
     assert result["violations_introduced"] == []
+
+
+def test_no_topology_supplied_means_no_blast_radius():
+    result = counterfactual(current_findings=[], proposed_findings=[], current_acl=None, proposed_acl=None)
+
+    assert result["blast_radius"] is None
+
+
+def test_blast_radius_counts_topology_changes():
+    topology_before = {"interfaces": [], "routing_neighbors": []}
+    topology_after = {"interfaces": [{"name": "Gi0/1"}], "routing_neighbors": [{"protocol": "ospf", "neighbor_ip": "10.0.0.2"}]}
+
+    result = counterfactual(
+        current_findings=[], proposed_findings=[], current_acl=None, proposed_acl=None,
+        current_topology=topology_before, proposed_topology=topology_after,
+    )
+
+    assert result["blast_radius"] == {"interfaces_affected": 1, "routes_affected": 1}
+
+
+def test_risk_tier_is_high_when_a_critical_violation_is_introduced():
+    result = counterfactual(
+        current_findings=[], proposed_findings=[_finding("CIS-NET-1.1.2", "CRITICAL")],
+        current_acl=None, proposed_acl=None,
+    )
+
+    assert result["risk"] == "HIGH"
+
+
+def test_risk_tier_is_low_when_nothing_regresses():
+    result = counterfactual(
+        current_findings=[_finding("CIS-NET-1.1.2", "CRITICAL")], proposed_findings=[],
+        current_acl=None, proposed_acl=None,
+    )
+
+    assert result["risk"] == "LOW"
+
+
+def test_risk_tier_is_bumped_up_when_new_access_accompanies_a_medium_violation():
+    result = counterfactual(
+        current_findings=[], proposed_findings=[_finding("CIS-NET-1.7.1", "MEDIUM")],
+        current_acl=_acl([]), proposed_acl=_acl([_permit()]),
+    )
+
+    assert result["risk"] == "HIGH"

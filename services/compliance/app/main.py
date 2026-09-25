@@ -130,6 +130,7 @@ async def counterfactual_endpoint(body: CounterfactualRequest):
     return counterfactual(
         current_findings, proposed_findings,
         body.current_baseline.get("acl"), body.proposed_baseline.get("acl"),
+        body.current_baseline.get("topology"), body.proposed_baseline.get("topology"),
     )
 
 

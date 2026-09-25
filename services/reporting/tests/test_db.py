@@ -103,6 +103,7 @@ async def test_provenance_chain_composes_finding_policy_remediation_and_events(s
     assert chain["finding"]["blast_radius"] == ["dev-2"]
     assert chain["policy"]["policy_bundle_version"] == "cis-generic-level1@1.0.0"
     assert chain["policy"]["baseline_sha256"] == "a" * 64
+    assert chain["policy"]["rule_id"] == CONTROL_ID
     assert chain["remediation"]["approved_by"] == "admin-1"
     assert chain["remediation"]["script"] == "no telnet"
     assert [e["event_type"] for e in chain["events"]] == ["VIOLATION_DETECTED", "APPROVED"]

@@ -37,6 +37,20 @@ def test_block_classification_is_never_approvable_by_anyone():
         check_permission(role="admin", decision_action="BLOCK", risk="LOW", blast_radius_count=0)
 
 
+def test_ai_actor_type_is_never_permitted_to_approve_even_as_admin():
+    """docs/Suggestions.md item 1 (Agent Firewall): an AI/automation caller
+    must never itself count as the approval, regardless of what role header
+    it presents."""
+    with pytest.raises(ApprovalDenied):
+        check_permission(
+            role="admin", decision_action="SINGLE_APPROVAL", risk="LOW", blast_radius_count=0, actor_type="ai",
+        )
+
+
+def test_actor_type_defaults_to_human_for_existing_callers():
+    check_permission(role="operator", decision_action="SINGLE_APPROVAL", risk="LOW", blast_radius_count=0)
+
+
 def test_dual_approval_requires_two_distinct_actors():
     assert dual_approval_satisfied("DUAL_APPROVAL", prior_approving_actors=set(), new_actor="admin-1") is False
     assert dual_approval_satisfied("DUAL_APPROVAL", prior_approving_actors={"admin-1"}, new_actor="admin-2") is True
