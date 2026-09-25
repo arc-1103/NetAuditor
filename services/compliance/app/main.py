@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from app import db
 from app.evaluator import evaluate_baseline, shutdown_graph_provider
 from app.opa_client import OPAEvaluationError
-from app.risk_scorer import summarize
+from app.reachability_diff import diff_acl
+from app.risk_scorer import fleet_score, summarize
 
 app = FastAPI(title="netaudit-compliance")
 
@@ -41,6 +42,14 @@ async def _close_graph_provider() -> None:
     for the app's lifetime; close it at process exit rather than leaking the
     connection."""
     await shutdown_graph_provider()
+
+
+class ReachabilityDiffRequest(BaseModel):
+    # ACLConfig-shaped dicts — kept as open dicts for the same reason
+    # EvaluateRequest.baseline is: services/schema/ is the shape's home, and
+    # re-declaring it here would be a second source of truth.
+    before: dict
+    after: dict
 
 
 class EvaluateRequest(BaseModel):
@@ -92,3 +101,19 @@ async def get_audit_run(run_id: str):
     is_evaluated = run["status"] in {db.STATUS_EVALUATED, "COMPLETE"}
     summary = summarize(run["findings"]) if is_evaluated else _NOT_EVALUATED_SUMMARY
     return {**run, "summary": summary}
+
+
+@app.post("/reachability-diff")
+async def reachability_diff(body: ReachabilityDiffRequest):
+    """docs/Additional-Features.md §4 — deterministic ACL diff fallback,
+    for when a caller needs an approximate blast radius without a full
+    Batfish topology simulation. See app/reachability_diff.py."""
+    return diff_acl(body.before, body.after)
+
+
+@app.get("/fleet-score")
+async def get_fleet_score():
+    """docs/Additional-Features.md §1's fleet-wide rollup — weighted by
+    total control weight across every evaluated run, not an average of each
+    run's own compliance_score. See app.risk_scorer.fleet_score."""
+    return fleet_score(await db.get_findings_by_run())

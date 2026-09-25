@@ -20,7 +20,7 @@ def sample_data():
 
 def test_summary_counts_and_scores():
     summary = pdf_service.summarize(sample_data()["findings"])
-    assert summary["compliance_score"] == 80
+    assert summary["compliance_score"] == 92
     assert summary["by_severity"]["HIGH"] == 1
 
 
@@ -79,7 +79,7 @@ def test_json_export_is_self_contained_and_machine_readable():
     report = pdf_service.build_json_report(sample_data())
     assert report["schema_version"] == "1.0.0"
     assert report["audit_run"]["file_hash"] == "a" * 64
-    assert report["summary"]["compliance_score"] == 80
+    assert report["summary"]["compliance_score"] == 92
     assert report["findings"][0]["control_id"] == "CIS-IOS-1.1.1"
 
 

@@ -10,7 +10,7 @@ POST /evaluate used in demos and integration tests.
 import logging
 import os
 
-from app import anomaly_client, db, evidence_locator, graph_client, opa_client, risk_scorer
+from app import anomaly_client, db, evidence_locator, graph_client, opa_client, risk_scorer, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ async def evaluate_baseline(
     summary = risk_scorer.summarize(findings)
 
     if audit_run_id:
-        await db.save_findings(
+        newly_detected = await db.save_findings(
             audit_run_id,
             findings,
             baseline=baseline,
@@ -137,6 +137,17 @@ async def evaluate_baseline(
         )
         if device_id:
             await db.save_anomaly(audit_run_id, device_id, anomaly_result)
+        # docs/Additional-Features.md §8: "on new violation found -> POST to
+        # ticketing webhook". Only the genuinely new ones (see
+        # db.save_findings' docstring) — a re-evaluation of an
+        # already-tracked, still-failing control must not re-notify.
+        for finding in newly_detected:
+            await webhooks.dispatch("VIOLATION_DETECTED", {
+                "audit_run_id": audit_run_id,
+                "control_id": finding.get("control_id"),
+                "severity": finding.get("severity"),
+                "title": finding.get("title"),
+            })
 
     return {
         "audit_run_id": audit_run_id,

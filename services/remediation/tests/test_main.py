@@ -38,11 +38,28 @@ def test_slm_defaults_to_real_mode_not_mock():
 async def test_generate_renders_preflights_and_persists(monkeypatch):
     save = AsyncMock()
     monkeypatch.setattr(main.db, "save_proposal", save)
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
     response = await request("POST", "/remediation/generate", json={"audit_run_id": RUN_ID, "finding": FINDING})
     assert response.status_code == 200
     assert response.json()["preflight"]["status"] == "SAFE"
     assert "ip ssh version 2" in response.json()["script"]
+    assert response.json()["decision"]["ruleset_version"] == "1.0.0"
     save.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_dispatches_a_remediation_proposed_webhook(monkeypatch):
+    monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main.webhooks, "dispatch", dispatch)
+
+    await request("POST", "/remediation/generate", json={"audit_run_id": RUN_ID, "finding": FINDING})
+
+    dispatch.assert_awaited_once()
+    event_type, payload = dispatch.await_args.args
+    assert event_type == "REMEDIATION_PROPOSED"
+    assert payload["control_id"] == "CIS-IOS-1.1.1"
 
 
 @pytest.mark.asyncio
@@ -97,15 +114,56 @@ async def test_approve_requires_run_id():
 
 @pytest.mark.asyncio
 async def test_approve_is_audited(monkeypatch):
-    approve = AsyncMock(return_value={"control_id": "CIS-IOS-1.1.1", "approval_status": "APPROVED"})
+    approve = AsyncMock(return_value={"audit_run_id": RUN_ID, "control_id": "CIS-IOS-1.1.1", "approval_status": "APPROVED"})
     monkeypatch.setattr(main.db, "approve", approve)
     response = await request("POST",
         "/remediation/CIS-IOS-1.1.1/approve",
         json={"approved": True, "audit_run_id": RUN_ID, "comment": "CAB-42"},
+        headers={"X-User-Id": "admin-1", "X-User-Role": "admin"},
+    )
+    assert response.status_code == 200
+    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", "CAB-42", "admin")
+
+
+@pytest.mark.asyncio
+async def test_approve_without_a_role_header_defaults_to_the_least_privileged_role(monkeypatch):
+    approve = AsyncMock(return_value={"audit_run_id": RUN_ID, "control_id": "CIS-IOS-1.1.1", "approval_status": "APPROVED"})
+    monkeypatch.setattr(main.db, "approve", approve)
+    response = await request("POST",
+        "/remediation/CIS-IOS-1.1.1/approve",
+        json={"approved": True, "audit_run_id": RUN_ID},
         headers={"X-User-Id": "admin-1"},
     )
     assert response.status_code == 200
-    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", "CAB-42")
+    approve.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, True, "admin-1", None, "auditor")
+
+
+@pytest.mark.asyncio
+async def test_final_approval_dispatches_a_webhook(monkeypatch):
+    monkeypatch.setattr(main.db, "approve", AsyncMock(return_value={
+        "audit_run_id": RUN_ID, "control_id": "CIS-IOS-1.1.1", "approval_status": "APPROVED", "approved_by": "admin-1",
+    }))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main.webhooks, "dispatch", dispatch)
+
+    await request("POST", "/remediation/CIS-IOS-1.1.1/approve", json={"approved": True, "audit_run_id": RUN_ID})
+
+    dispatch.assert_awaited_once()
+    assert dispatch.await_args.args[0] == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_partial_dual_approval_does_not_dispatch_a_webhook_yet(monkeypatch):
+    monkeypatch.setattr(main.db, "approve", AsyncMock(return_value={
+        "audit_run_id": RUN_ID, "control_id": "CIS-IOS-1.1.1", "approval_status": "PENDING",
+        "dual_approval": {"required": 2, "received": 1},
+    }))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main.webhooks, "dispatch", dispatch)
+
+    await request("POST", "/remediation/CIS-IOS-1.1.1/approve", json={"approved": True, "audit_run_id": RUN_ID})
+
+    dispatch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -119,10 +177,24 @@ async def test_non_safe_approval_returns_conflict(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_approval_denied_by_the_role_matrix_is_403(monkeypatch):
+    from app.approval_matrix import ApprovalDenied
+    monkeypatch.setattr(main.db, "approve", AsyncMock(side_effect=ApprovalDenied("Network Operator cannot approve a HIGH-risk change.")))
+    response = await request("POST",
+        "/remediation/CIS-IOS-1.1.1/approve",
+        json={"approved": True, "audit_run_id": RUN_ID},
+        headers={"X-User-Id": "operator-1", "X-User-Role": "operator"},
+    )
+    assert response.status_code == 403
+    assert "HIGH-risk" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_bulk_generation_uses_persisted_findings(monkeypatch):
-    monkeypatch.setattr(main.db, "get_findings", AsyncMock(return_value=[FINDING]))
+    monkeypatch.setattr(main.db, "get_findings", AsyncMock(return_value=[{**FINDING, "blast_radius": []}]))
     save = AsyncMock()
     monkeypatch.setattr(main.db, "save_proposal", save)
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
     response = await request("POST", f"/remediation/audit-runs/{RUN_ID}/generate")
     assert response.status_code == 200
     assert response.json()["generated"] == 1
@@ -166,6 +238,7 @@ async def test_missing_template_without_a_device_vendor_is_422(monkeypatch):
 async def test_missing_template_falls_back_to_agentic_rag(monkeypatch):
     save = AsyncMock()
     monkeypatch.setattr(main.db, "save_proposal", save)
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
     monkeypatch.setattr(main, "_manual_provider", FakeManualProvider(excerpts=["do the thing"]))
     monkeypatch.setattr(main, "_slm", FakeSLM())
 
@@ -194,6 +267,7 @@ async def test_agentic_rag_proposal_is_always_risk_flags_never_safe(monkeypatch)
     rollback, and no static lockout patterns, must never reach SAFE — an
     agentic-RAG proposal can never be approved through the normal flow."""
     monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
     monkeypatch.setattr(main, "_manual_provider", FakeManualProvider(excerpts=["grounded context"]))
     monkeypatch.setattr(main, "_slm", FakeSLM(response={"remediation_cli": "fix it", "rollback_cli": "unfix it"}))
 
@@ -215,6 +289,7 @@ async def test_agentic_rag_proposal_is_always_risk_flags_never_safe(monkeypatch)
 @pytest.mark.asyncio
 async def test_agentic_rag_proposal_flags_ungrounded_synthesis_and_missing_rollback(monkeypatch):
     monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
     monkeypatch.setattr(main, "_manual_provider", FakeManualProvider(excerpts=[]))
     monkeypatch.setattr(main, "_slm", FakeSLM(response={"remediation_cli": "fix it", "rollback_cli": ""}))
 
@@ -231,3 +306,65 @@ async def test_agentic_rag_proposal_flags_ungrounded_synthesis_and_missing_rollb
     flags = response.json()["preflight"]["risk_flags"]
     assert any("ungrounded" in flag for flag in flags)
     assert any("mandatory rollback" in flag for flag in flags)
+
+
+# ── Rollback lifecycle (docs/Additional-Features.md §3) ──────────────
+@pytest.mark.asyncio
+async def test_apply_marks_applied(monkeypatch):
+    mark_applied = AsyncMock(return_value={"control_id": "CIS-IOS-1.1.1", "rollback_status": "APPLIED"})
+    monkeypatch.setattr(main.db, "mark_applied", mark_applied)
+    response = await request(
+        "POST", "/remediation/CIS-IOS-1.1.1/apply",
+        json={"audit_run_id": RUN_ID}, headers={"X-User-Id": "operator-1"},
+    )
+    assert response.status_code == 200
+    mark_applied.assert_awaited_once_with("CIS-IOS-1.1.1", RUN_ID, "operator-1")
+
+
+@pytest.mark.asyncio
+async def test_apply_of_unapproved_proposal_is_conflict(monkeypatch):
+    monkeypatch.setattr(main.db, "mark_applied", AsyncMock(return_value=None))
+    response = await request("POST", "/remediation/CIS-IOS-1.1.1/apply", json={"audit_run_id": RUN_ID})
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_rollback_is_audited_with_reason(monkeypatch):
+    rollback = AsyncMock(return_value={"control_id": "CIS-IOS-1.1.1", "rollback_status": "ROLLED_BACK"})
+    monkeypatch.setattr(main.db, "rollback", rollback)
+    response = await request(
+        "POST", "/remediation/CIS-IOS-1.1.1/rollback",
+        json={"audit_run_id": RUN_ID, "reason": "post-change verification failed", "verification_failed": True},
+        headers={"X-User-Id": "operator-1"},
+    )
+    assert response.status_code == 200
+    rollback.assert_awaited_once_with(
+        "CIS-IOS-1.1.1", RUN_ID, "operator-1", "post-change verification failed", True
+    )
+
+
+@pytest.mark.asyncio
+async def test_rollback_dispatches_a_high_priority_webhook(monkeypatch):
+    monkeypatch.setattr(main.db, "rollback", AsyncMock(return_value={"control_id": "CIS-IOS-1.1.1", "rollback_status": "ROLLED_BACK"}))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main.webhooks, "dispatch", dispatch)
+
+    await request(
+        "POST", "/remediation/CIS-IOS-1.1.1/rollback",
+        json={"audit_run_id": RUN_ID, "reason": "broke connectivity"},
+    )
+
+    dispatch.assert_awaited_once()
+    event_type, payload = dispatch.await_args.args
+    assert event_type == "ROLLED_BACK"
+    assert payload["priority"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_rollback_of_a_never_applied_proposal_is_conflict(monkeypatch):
+    monkeypatch.setattr(main.db, "rollback", AsyncMock(return_value=None))
+    response = await request(
+        "POST", "/remediation/CIS-IOS-1.1.1/rollback",
+        json={"audit_run_id": RUN_ID, "reason": "changed my mind"},
+    )
+    assert response.status_code == 409

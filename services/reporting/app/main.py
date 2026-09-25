@@ -5,6 +5,10 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from app import db
+from app.executive_report import (
+    fleet_score, fleet_score_trend, remediation_action_mix, top_exposed_devices, violations_found_and_resolved,
+)
+from app.mttr import summarize_mttr
 from app.pdf_service import build_json_report, generate_pdf, render_cef, render_html
 
 app = FastAPI(title="netaudit-reporting", version="1.0.0")
@@ -77,6 +81,41 @@ async def json_export(audit_run_id: str):
         raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")
     _require_evaluated(data)
     return build_json_report(data)
+
+
+@app.get("/mttr")
+async def mttr():
+    """docs/Additional-Features.md §5 — mean-time-to-remediate by severity
+    tier, computed live from ledger_events. See app/mttr.py."""
+    events = await db.get_ledger_events(("VIOLATION_DETECTED", "APPROVED"))
+    return summarize_mttr(events)
+
+
+@app.get("/executive-report")
+async def executive_report():
+    """docs/Additional-Features.md §6 — the artifact a non-technical
+    stakeholder can read: fleet score + trend, top-5 exposure, violations
+    found/resolved, remediation action mix, MTTR by tier. See
+    app/executive_report.py; the per-finding provenance chain it also asks
+    for is GET /provenance/{run_id}/{control_id} below, linked by finding ID
+    rather than embedded here."""
+    inputs = await db.get_fleet_report_inputs()
+    mttr_events = await db.get_ledger_events(("VIOLATION_DETECTED", "APPROVED"))
+    return {
+        "fleet_score": fleet_score(inputs["findings_by_run"]),
+        "fleet_score_trend": fleet_score_trend(inputs["evaluations"]),
+        "top_exposed_devices": top_exposed_devices(inputs["findings_by_run"], inputs["run_metadata"]),
+        "violations": violations_found_and_resolved(inputs["violation_events"], inputs["findings_by_run"]),
+        "remediation_action_mix": remediation_action_mix(inputs["proposals"]),
+        "mttr": summarize_mttr(mttr_events),
+    }
+
+
+@app.get("/provenance/{audit_run_id}/{control_id}")
+async def provenance(audit_run_id: str, control_id: str):
+    """docs/Additional-Features.md §6: "full provenance chain for any
+    single finding, linked by ID"."""
+    return {"audit_run_id": audit_run_id, "control_id": control_id, "events": await db.get_provenance_chain(audit_run_id, control_id)}
 
 
 @app.get("/reports/{audit_run_id}/cef", response_class=PlainTextResponse)

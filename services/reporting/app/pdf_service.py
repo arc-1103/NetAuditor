@@ -1,5 +1,4 @@
 import os
-from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -7,27 +6,11 @@ from uuid import UUID
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from weasyprint import HTML
 
+from app.scoring import summarize
+
 TEMPLATE_DIR = Path(__file__).parents[1] / "html_templates"
 OUTPUT_DIR = Path(os.getenv("PDF_OUTPUT_DIR", "/data/reports"))
 SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-
-
-def summarize(findings: list[dict]) -> dict:
-    counts = Counter(str(f.get("severity", "")).upper() for f in findings)
-    risk = sum(int(f.get("risk_score", 0)) for f in findings)
-    failed = len({f.get("control_id") for f in findings if f.get("control_id")})
-    evaluated = max(int(os.getenv("CONTROLS_EVALUATED", "11")), failed)
-    passed = max(0, evaluated - failed)
-    return {
-        "total_findings": len(findings),
-        "by_severity": {level: counts[level] for level in SEVERITY_ORDER},
-        "risk_score": risk,
-        "compliance_score": max(0, 100 - risk),
-        "controls_evaluated": evaluated,
-        "controls_failed": failed,
-        "controls_passed": passed,
-        "control_pass_rate": round((passed / evaluated) * 100) if evaluated else 0,
-    }
 
 
 def render_html(report_data: dict) -> str:

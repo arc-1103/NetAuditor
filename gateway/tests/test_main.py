@@ -264,3 +264,76 @@ def test_list_remediations_for_run(client, fake_proxy):
 
     assert resp.status_code == 200
     assert resp.json()["remediations"] == []
+
+
+def test_apply_remediation_proxies_control_id_in_path(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"control_id": "AC-2", "rollback_status": "APPLIED"}))
+
+    resp = client.post("/api/remediation/AC-2/apply", json={"audit_run_id": "run-1"})
+
+    assert resp.status_code == 200
+    call = last_proxy_call()
+    assert call["url"].endswith("/remediation/AC-2/apply")
+    assert call["kwargs"]["json"] == {"audit_run_id": "run-1"}
+
+
+def test_rollback_remediation_proxies_reason(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"control_id": "AC-2", "rollback_status": "ROLLED_BACK"}))
+
+    resp = client.post(
+        "/api/remediation/AC-2/rollback",
+        json={"audit_run_id": "run-1", "reason": "broke connectivity", "verification_failed": True},
+    )
+
+    assert resp.status_code == 200
+    call = last_proxy_call()
+    assert call["url"].endswith("/remediation/AC-2/rollback")
+    assert call["kwargs"]["json"]["reason"] == "broke connectivity"
+
+
+def test_fleet_score_proxies_to_compliance(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"devices_scored": 3, "fleet_score": 88}))
+
+    resp = client.get("/api/fleet-score")
+
+    assert resp.status_code == 200
+    assert resp.json()["fleet_score"] == 88
+    assert last_proxy_call()["url"].endswith("/fleet-score")
+
+
+def test_mttr_proxies_to_reporting(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"by_severity": {}}))
+
+    resp = client.get("/api/mttr")
+
+    assert resp.status_code == 200
+    assert last_proxy_call()["url"].endswith("/mttr")
+
+
+def test_reachability_diff_proxies_before_and_after(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"has_reachability_change": True}))
+
+    resp = client.post("/api/reachability-diff", json={"before": {"ingress_entries": []}, "after": {"ingress_entries": []}})
+
+    assert resp.status_code == 200
+    call = last_proxy_call()
+    assert call["url"].endswith("/reachability-diff")
+    assert call["kwargs"]["json"] == {"before": {"ingress_entries": []}, "after": {"ingress_entries": []}}
+
+
+def test_executive_report_proxies_to_reporting(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"fleet_score": {"fleet_score": 88}}))
+
+    resp = client.get("/api/executive-report")
+
+    assert resp.status_code == 200
+    assert last_proxy_call()["url"].endswith("/executive-report")
+
+
+def test_provenance_proxies_run_and_control_id(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"events": []}))
+
+    resp = client.get("/api/provenance/run-1/CIS-NET-1.1.2")
+
+    assert resp.status_code == 200
+    assert last_proxy_call()["url"].endswith("/provenance/run-1/CIS-NET-1.1.2")

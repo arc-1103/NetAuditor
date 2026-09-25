@@ -12,7 +12,7 @@ import hashlib
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -45,13 +45,20 @@ async def save_findings(
     *,
     baseline: dict | None = None,
     framework: str = "CIS",
-) -> None:
+) -> list[dict]:
     """Replace this run's findings and mark it EVALUATED, in one transaction.
 
     Replace rather than append: re-running an audit after a policy update must
     not leave findings for controls that no longer fail. The immutable trail
     the blueprint calls for lives in `audit_runs`, not here.
+
+    Returns the findings that were genuinely new this call (a real first
+    VIOLATION_DETECTED was recorded for them) — app/webhooks.py's caller
+    (app/evaluator.py) uses this so a re-evaluation of an already-known,
+    still-failing control doesn't re-notify a ticketing system that's
+    already tracking it.
     """
+    newly_detected: list[dict] = []
     async with async_session() as session:
         async with session.begin():
             await session.execute(
@@ -80,6 +87,38 @@ async def save_findings(
                         for f in findings
                     ],
                 )
+                # MTTR (docs/Additional-Features.md §5) measures from first
+                # detection, so a re-evaluation after a policy-bundle update
+                # (this run's findings were just deleted and reinserted
+                # above) must not reset a still-failing control's clock —
+                # only record VIOLATION_DETECTED for a (run, control) pair
+                # that has never had one before. One statement per finding
+                # (not a set-based json_to_recordset insert) so this stays
+                # plain, dialect-neutral SQL for the SQLite-backed tests.
+                for f in findings:
+                    if not f.get("control_id"):
+                        continue
+                    result = await session.execute(
+                        text(
+                            """
+                            INSERT INTO ledger_events (audit_run_id, control_id, event_type, actor, ruleset_version, payload)
+                            SELECT :audit_run_id, :control_id, 'VIOLATION_DETECTED', 'system', :ruleset_version, :payload
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM ledger_events
+                                WHERE audit_run_id = :audit_run_id AND control_id = :control_id
+                                  AND event_type = 'VIOLATION_DETECTED'
+                            )
+                            """
+                        ),
+                        {
+                            "audit_run_id": audit_run_id,
+                            "control_id": f["control_id"],
+                            "ruleset_version": POLICY_BUNDLE_VERSION,
+                            "payload": json.dumps({"severity": f.get("severity"), "title": f.get("title")}),
+                        },
+                    )
+                    if result.rowcount:
+                        newly_detected.append(f)
             if baseline is not None:
                 canonical = json.dumps(baseline, sort_keys=True, separators=(",", ":"))
                 device = baseline.get("device", {})
@@ -135,6 +174,35 @@ async def save_findings(
                     "run_id": audit_run_id,
                 },
             )
+    return newly_detected
+
+
+async def get_findings_by_run() -> dict[str, list[dict]]:
+    """Every EVALUATED/COMPLETE run's findings, grouped by audit_run_id — the
+    input risk_scorer.fleet_score needs for docs/Additional-Features.md §1's
+    fleet-wide rollup. Each audit_run_id here stands in for one device
+    instance (see app/db.py's module docstring elsewhere in this codebase
+    for why there's no separate persistent device identity to group by
+    instead)."""
+    async with async_session() as session:
+        run_ids = (
+            await session.execute(
+                text("SELECT id FROM audit_runs WHERE status IN ('EVALUATED', 'COMPLETE')")
+            )
+        ).scalars().all()
+        if not run_ids:
+            return {}
+        rows = (
+            await session.execute(
+                text("SELECT audit_run_id, control_id, severity FROM compliance_findings WHERE audit_run_id IN :run_ids")
+                .bindparams(bindparam("run_ids", expanding=True)),
+                {"run_ids": run_ids},
+            )
+        ).mappings().all()
+    by_run: dict[str, list[dict]] = {str(run_id): [] for run_id in run_ids}
+    for row in rows:
+        by_run[str(row["audit_run_id"])].append({"control_id": row["control_id"], "severity": row["severity"]})
+    return by_run
 
 
 async def save_anomaly(audit_run_id: str, device_id: str, anomaly: dict) -> None:

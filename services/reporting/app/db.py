@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 POSTGRES_DSN = os.getenv(
@@ -56,6 +56,94 @@ async def get_report_data(audit_run_id: str) -> dict | None:
     return result
 
 
+async def get_fleet_report_inputs() -> dict:
+    """Everything app/executive_report.py's functions need for docs/
+    Additional-Features.md §6, fetched in one pass: current findings and
+    run metadata for every EVALUATED/COMPLETE run, the full audit_evaluations
+    history for the trend line, every remediation proposal, and the ledger's
+    VIOLATION_DETECTED events."""
+    async with async_session() as session:
+        runs = (await session.execute(text(
+            "SELECT id, original_filename, detected_vendor, detected_os "
+            "FROM audit_runs WHERE status IN ('EVALUATED', 'COMPLETE')"
+        ))).mappings().all()
+        run_ids = [r["id"] for r in runs]
+        findings_by_run: dict[str, list[dict]] = {str(r["id"]): [] for r in runs}
+        if run_ids:
+            finding_rows = (await session.execute(
+                text("SELECT audit_run_id, control_id, severity, risk_score FROM compliance_findings WHERE audit_run_id IN :run_ids")
+                .bindparams(bindparam("run_ids", expanding=True)),
+                {"run_ids": run_ids},
+            )).mappings().all()
+            for row in finding_rows:
+                findings_by_run[str(row["audit_run_id"])].append(dict(row))
+
+        evaluations = (await session.execute(text(
+            "SELECT audit_run_id, evaluated_at, findings_snapshot FROM audit_evaluations ORDER BY evaluated_at"
+        ))).mappings().all()
+        evaluations = [dict(e) for e in evaluations]
+        for e in evaluations:
+            e["audit_run_id"] = str(e["audit_run_id"])
+            if isinstance(e["findings_snapshot"], str):
+                e["findings_snapshot"] = json.loads(e["findings_snapshot"])
+
+        proposals = (await session.execute(text(
+            "SELECT audit_run_id, control_id, approval_status, decision_action, "
+            "preflight_status, applied_at FROM remediation_proposals"
+        ))).mappings().all()
+
+    run_metadata = {
+        str(r["id"]): {
+            "original_filename": r["original_filename"],
+            "detected_vendor": r["detected_vendor"],
+            "detected_os": r["detected_os"],
+        }
+        for r in runs
+    }
+    violation_events = await get_ledger_events(("VIOLATION_DETECTED",))
+    return {
+        "findings_by_run": findings_by_run,
+        "run_metadata": run_metadata,
+        "evaluations": evaluations,
+        "proposals": [dict(p) for p in proposals],
+        "violation_events": violation_events,
+    }
+
+
+async def get_ledger_events(event_types: tuple[str, ...]) -> list[dict]:
+    """Raw ledger_events rows for app/mttr.py — created_at stays a datetime
+    (not stringified) so durations can be computed directly, and payload is
+    decoded from its JSON text now rather than by each caller."""
+    async with async_session() as session:
+        rows = (await session.execute(
+            text("SELECT audit_run_id, control_id, event_type, actor, ruleset_version, payload, created_at "
+                 "FROM ledger_events WHERE event_type IN :event_types")
+            .bindparams(bindparam("event_types", expanding=True)),
+            {"event_types": list(event_types)},
+        )).mappings().all()
+    events = [dict(r) for r in rows]
+    for event in events:
+        if isinstance(event.get("payload"), str):
+            event["payload"] = json.loads(event["payload"])
+    return events
+
+
+async def get_provenance_chain(audit_run_id: str, control_id: str) -> list[dict]:
+    """docs/Additional-Features.md §6's "full provenance chain for any
+    single finding, linked by ID" — every ledger_events row for this
+    (run, control) pair, in order."""
+    async with async_session() as session:
+        rows = (await session.execute(text(
+            "SELECT event_type, actor, ruleset_version, payload, created_at FROM ledger_events "
+            "WHERE audit_run_id=:run_id AND control_id=:control_id ORDER BY created_at"
+        ), {"run_id": audit_run_id, "control_id": control_id})).mappings().all()
+    events = [_jsonable(r) for r in rows]
+    for event in events:
+        if isinstance(event.get("payload"), str):
+            event["payload"] = json.loads(event["payload"])
+    return events
+
+
 async def record_report(audit_run_id: str, path: str, generated_by: str) -> None:
     now = datetime.now(timezone.utc)
     async with async_session() as session, session.begin():
@@ -66,6 +154,10 @@ async def record_report(audit_run_id: str, path: str, generated_by: str) -> None
         await session.execute(text("""
             UPDATE audit_runs SET status='COMPLETE', updated_at=:now WHERE id=:run_id
         """), {"run_id": audit_run_id, "now": now})
+        await session.execute(text("""
+            INSERT INTO ledger_events (audit_run_id, control_id, event_type, actor, payload)
+            VALUES (:run_id, NULL, 'REPORT_GENERATED', :user_id, :payload)
+        """), {"run_id": audit_run_id, "user_id": generated_by or "unknown", "payload": json.dumps({"file_path": path})})
 
 
 def _jsonable(row) -> dict:

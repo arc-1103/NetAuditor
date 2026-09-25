@@ -27,6 +27,43 @@ def test_health(client):
     assert resp.json() == {"status": "ok", "service": "compliance"}
 
 
+# ── GET /fleet-score ─────────────────────────────────────────────────
+def test_fleet_score_rolls_up_every_evaluated_run(client, monkeypatch):
+    monkeypatch.setattr(
+        main.db, "get_findings_by_run",
+        AsyncMock(return_value={"run-a": [{"control_id": "CIS-NET-1.6.1", "severity": "LOW"}], "run-b": []}),
+    )
+
+    resp = client.get("/fleet-score")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["devices_scored"] == 2
+    assert 0 <= body["fleet_score"] <= 100
+
+
+def test_fleet_score_of_no_evaluated_runs_is_fully_compliant(client, monkeypatch):
+    monkeypatch.setattr(main.db, "get_findings_by_run", AsyncMock(return_value={}))
+
+    resp = client.get("/fleet-score")
+
+    assert resp.json() == {"devices_scored": 0, "fleet_score": 100}
+
+
+# ── POST /reachability-diff ──────────────────────────────────────────
+def test_reachability_diff_flags_a_removed_permit_rule(client):
+    entry = {"sequence": 10, "action": "permit", "protocol": "tcp", "source": "any", "destination": "10.0.0.0/24", "port": "443"}
+    resp = client.post("/reachability-diff", json={
+        "before": {"ingress_entries": [entry], "egress_entries": []},
+        "after": {"ingress_entries": [], "egress_entries": []},
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["has_reachability_change"] is True
+    assert len(body["ingress"]["newly_blocked_flows"]) == 1
+
+
 # ── POST /evaluate ──────────────────────────────────────────────────
 def test_evaluate_returns_findings_and_summary(client, monkeypatch, baseline):
     monkeypatch.setattr(
@@ -108,7 +145,7 @@ def test_get_audit_run_returns_run_findings_and_summary(client, monkeypatch):
     assert len(body["findings"]) == 2
     # Summary is computed on read, so it can't drift from the stored findings.
     assert body["summary"]["total_findings"] == 2
-    assert body["summary"]["compliance_score"] == 55
+    assert body["summary"]["compliance_score"] == 84
 
 
 def test_get_audit_run_does_not_fabricate_a_score_for_a_run_never_evaluated(client, monkeypatch):

@@ -1,0 +1,70 @@
+# Confidence-weighted auto-decision table — docs/Additional-Features.md §2.
+#
+# This is a config object, not Python, on purpose: it's the actual product
+# surface the doc calls out ("SAFE / BLOCK / HUMAN APPROVAL?" needs to be a
+# rule, not a box in a diagram"), and it must be editable and versioned
+# without a code deploy so a ledger_events row can always cite exactly which
+# version of this table authorized or blocked a given decision.
+#
+# Bump `version` on every edit to these rules — app/decision.py caches this
+# file for the process lifetime, and the version is what
+# ledger_events.ruleset_version records.
+version: "1.0.0"
+
+# app/decision.py's inputs, and where they really come from today:
+#   parser_agreement — 0..1. The doc's real signal is independent dual-parser
+#     agreement (e.g. SLM vs. TextFSM); that cross-check isn't built yet
+#     (docs/ArchitecturalChanges.md §3 tracks it as unbuilt). Until it lands,
+#     this is proxied by audit_runs.parsing_confidence, the SLM's own
+#     single-model confidence — a materially weaker signal than true
+#     agreement between two independent parsers. Swap the proxy in
+#     app/decision.py when the real cross-check ships; these thresholds
+#     don't need to change.
+#   blast_radius — count of devices in the finding's GraphRAG blast_radius
+#     list (services/compliance/app/graph_client.py).
+#   risk — LOW/MEDIUM/HIGH, derived from the finding's CIS severity
+#     (app/decision.py:risk_for_severity) since no separate remediation-risk
+#     signal exists.
+#
+# Rules are evaluated in order; the first match wins.
+rules:
+  # No per-service "flagged critical" registry exists anywhere in this
+  # codebase yet to test the doc's literal condition. Conservatively block
+  # any large-blast-radius change instead of skipping the row outright.
+  # ponytail: proxy rule — replace `blast_radius_min` with a real
+  # critical-service-flag lookup once that registry exists.
+  - id: block-large-blast-radius
+    when: {blast_radius_min: 3}
+    action: BLOCK
+    reason: "Blast radius >= 3 devices — treated as a proxy for a flagged critical service until that registry exists."
+
+  - id: block-low-parser-agreement
+    when: {parser_agreement_max: 0.90}
+    action: BLOCK
+    reason: "Parser agreement below 90% — force human review."
+
+  - id: dual-approval-medium-agreement
+    when: {parser_agreement_max: 0.95}
+    action: DUAL_APPROVAL
+    reason: "Parser agreement 90-95% — require two independent approvals."
+
+  # Checked before the single-approval row below: >=99% is a strict subset
+  # of >=95%, so the tighter rule must be tried first or it would never fire.
+  - id: auto-apply-high-agreement-zero-blast-radius
+    when: {parser_agreement_min: 0.99, blast_radius_max: 0, risk: [LOW]}
+    action: AUTO_APPLY
+    reason: ">=99% parser agreement, zero reachability changes, low risk."
+
+  - id: single-approval-small-blast-radius
+    when: {parser_agreement_min: 0.95, blast_radius_max: 2}
+    action: SINGLE_APPROVAL
+    reason: ">=95% parser agreement, <=2 services affected."
+
+  # Safety net — every case above should already be covered (a >=95%
+  # agreement proposal with blast radius > 2 is caught by
+  # block-large-blast-radius at blast_radius >= 3), but a table this
+  # consequential should never silently fall through to "no action".
+  - id: default-single-approval
+    when: {}
+    action: SINGLE_APPROVAL
+    reason: "No more specific rule matched — default to requiring a human approval."

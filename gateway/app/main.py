@@ -124,6 +124,21 @@ class RemediationApproveRequest(BaseModel):
     comment: str | None = None
 
 
+class RemediationAuditRunScopedRequest(BaseModel):
+    audit_run_id: str
+
+
+class RemediationRollbackRequest(BaseModel):
+    audit_run_id: str
+    reason: str
+    verification_failed: bool = False
+
+
+class ReachabilityDiffRequest(BaseModel):
+    before: dict
+    after: dict
+
+
 class RemediationGenerateRequest(BaseModel):
     audit_run_id: str
     finding: dict
@@ -218,7 +233,10 @@ async def approve_remediation(
     control_id: str, body: RemediationApproveRequest, user=Depends(require_operator)
 ):
     async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
-        headers = {"X-User-Id": user["sub"]}
+        # X-User-Role lets Remediation's approval matrix (docs/Additional-
+        # Features.md §7) tell a Network Operator from a Security Lead —
+        # require_operator above only gates "some approver role", not which one.
+        headers = {"X-User-Id": user["sub"], "X-User-Role": user.get("role", "")}
         resp = await client.post(
             f"{REMEDIATION_URL}/remediation/{control_id}/approve",
             json=body.model_dump(exclude_none=True),
@@ -237,6 +255,75 @@ async def generate_remediation(body: RemediationGenerateRequest, user=Depends(re
             json=body.model_dump(),
             headers={"X-User-Id": user["sub"]},
         )
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/remediation/{control_id}/apply")
+async def apply_remediation(control_id: str, body: RemediationAuditRunScopedRequest, user=Depends(require_operator)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(
+            f"{REMEDIATION_URL}/remediation/{control_id}/apply",
+            json=body.model_dump(), headers={"X-User-Id": user["sub"]},
+        )
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/remediation/{control_id}/rollback")
+async def rollback_remediation(control_id: str, body: RemediationRollbackRequest, user=Depends(require_operator)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(
+            f"{REMEDIATION_URL}/remediation/{control_id}/rollback",
+            json=body.model_dump(), headers={"X-User-Id": user["sub"]},
+        )
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/fleet-score")
+async def fleet_score(user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/fleet-score")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/mttr")
+async def mttr(user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{REPORTING_URL}/mttr")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/reachability-diff")
+async def reachability_diff(body: ReachabilityDiffRequest, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(f"{COMPLIANCE_URL}/reachability-diff", json=body.model_dump())
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/executive-report")
+async def executive_report(user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{REPORTING_URL}/executive-report")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/provenance/{run_id}/{control_id}")
+async def provenance(run_id: str, control_id: str, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{REPORTING_URL}/provenance/{run_id}/{control_id}")
     if resp.status_code >= 400:
         raise upstream_error(resp)
     return resp.json()

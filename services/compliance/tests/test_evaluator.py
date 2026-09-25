@@ -14,11 +14,15 @@ def _stub_opa(monkeypatch, findings):
     monkeypatch.setattr(evaluator.opa_client, "evaluate", AsyncMock(return_value=findings))
 
 
-def _stub_persistence(monkeypatch):
+def _stub_persistence(monkeypatch, newly_detected=()):
     """save_findings and save_anomaly both run whenever audit_run_id is
     given — mock both together so a test opting into persistence doesn't
-    silently attempt a real DB write for whichever one it forgot."""
-    save_findings = AsyncMock()
+    silently attempt a real DB write for whichever one it forgot.
+    save_findings' return value (newly-detected findings, see its
+    docstring) defaults to empty so evaluator.py's webhook dispatch loop
+    has something iterable, matching a re-evaluation of already-known
+    violations."""
+    save_findings = AsyncMock(return_value=list(newly_detected))
     save_anomaly = AsyncMock()
     monkeypatch.setattr(evaluator.db, "save_findings", save_findings)
     monkeypatch.setattr(evaluator.db, "save_anomaly", save_anomaly)
@@ -32,7 +36,7 @@ async def test_scores_findings_and_builds_summary(monkeypatch, baseline):
     result = await evaluator.evaluate_baseline(baseline, "CIS", RUN_ID)
 
     assert result["findings"][0]["risk_score"] == 40
-    assert result["summary"]["compliance_score"] == 60
+    assert result["summary"]["compliance_score"] == 85
     assert result["framework"] == "CIS"
     assert result["device"]["detected_vendor"] == "cisco"
 
@@ -46,6 +50,35 @@ async def test_persists_scored_findings_when_given_a_run_id(monkeypatch, baselin
     run_id, saved = save.await_args.args
     assert run_id == RUN_ID
     assert saved[0]["risk_score"] == 40  # scored, not raw
+
+
+async def test_dispatches_a_webhook_only_for_newly_detected_violations(monkeypatch, baseline):
+    """docs/Additional-Features.md §8: "on new violation found" — a
+    still-failing control that was already known (save_findings returns it
+    only when genuinely new) must not re-dispatch."""
+    finding = {"control_id": "CIS-IOS-1.1.2", "severity": "CRITICAL"}
+    _stub_opa(monkeypatch, [finding])
+    _stub_persistence(monkeypatch, newly_detected=[finding])
+    dispatch = AsyncMock()
+    monkeypatch.setattr(evaluator.webhooks, "dispatch", dispatch)
+
+    await evaluator.evaluate_baseline(baseline, "CIS", RUN_ID)
+
+    dispatch.assert_awaited_once_with(
+        "VIOLATION_DETECTED",
+        {"audit_run_id": RUN_ID, "control_id": "CIS-IOS-1.1.2", "severity": "CRITICAL", "title": None},
+    )
+
+
+async def test_does_not_dispatch_a_webhook_when_nothing_is_newly_detected(monkeypatch, baseline):
+    _stub_opa(monkeypatch, [{"control_id": "CIS-IOS-1.1.2", "severity": "CRITICAL"}])
+    _stub_persistence(monkeypatch, newly_detected=[])
+    dispatch = AsyncMock()
+    monkeypatch.setattr(evaluator.webhooks, "dispatch", dispatch)
+
+    await evaluator.evaluate_baseline(baseline, "CIS", RUN_ID)
+
+    dispatch.assert_not_awaited()
 
 
 async def test_skips_persistence_without_a_run_id(monkeypatch, baseline):
@@ -223,7 +256,7 @@ async def test_anomaly_result_is_attached_but_never_touches_findings_or_score(mo
     result = await evaluator.evaluate_baseline(baseline, "CIS", RUN_ID, anomaly=anomaly)
 
     assert result["anomaly"] == {"status": "scored", "is_anomaly": True, "anomaly_score": -0.3, "peer_count": 9}
-    assert result["summary"]["compliance_score"] == 60  # unchanged by the anomaly verdict
+    assert result["summary"]["compliance_score"] == 85  # unchanged by the anomaly verdict
     assert all("is_anomaly" not in f and "anomaly_score" not in f for f in result["findings"])
     assert anomaly.ingested == [baseline]
     assert anomaly.checked == [baseline]

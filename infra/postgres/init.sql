@@ -151,6 +151,26 @@ CREATE TABLE IF NOT EXISTS remediation_proposals (
     approved_by        TEXT,
     approval_comment   TEXT,
     approved_at        TIMESTAMPTZ,
+    -- Confidence-weighted decision classification (docs/Additional-Features.md
+    -- §2) — advisory only, see app/decision.py for why AUTO_APPLY never
+    -- bypasses approval_status above.
+    decision_action    TEXT,
+    decision_rule_id   TEXT,
+    decision_ruleset_version TEXT,
+    -- Approval Matrix / Reviewer RBAC (docs/Additional-Features.md §7) —
+    -- same values app/decision.py used to classify this proposal, so
+    -- app/approval_matrix.py's role check always agrees with what the
+    -- approver was actually shown. See app/db.approve for the 2-person
+    -- rule, which counts ledger_events rather than a column here.
+    risk_tier          TEXT CHECK (risk_tier IN ('LOW', 'MEDIUM', 'HIGH')),
+    blast_radius_count INTEGER NOT NULL DEFAULT 0,
+    -- Rollback/undo tracking (docs/Additional-Features.md §3) — see
+    -- app/rollback.py. There is no live device-push anywhere in this
+    -- codebase, so these are operator-attested lifecycle states.
+    pre_change_baseline_sha256 TEXT,
+    applied_at         TIMESTAMPTZ,
+    rollback_status    TEXT NOT NULL DEFAULT 'NONE'
+        CHECK (rollback_status IN ('NONE', 'APPLIED', 'VERIFICATION_FAILED', 'ROLLED_BACK')),
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (audit_run_id, control_id),
@@ -167,3 +187,28 @@ CREATE TABLE IF NOT EXISTS generated_reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reports_audit_run ON generated_reports (audit_run_id, generated_at DESC);
+
+-- Append-only remediation/compliance event ledger (docs/Additional-Features.md
+-- §3, §5, §7, §8). One row per lifecycle event; every consumer (MTTR,
+-- rollback, approval provenance, SIEM/webhook dispatch) reads this same
+-- stream instead of each growing its own history table. No code path may
+-- UPDATE or DELETE a row here — corrections are new rows.
+CREATE TABLE IF NOT EXISTS ledger_events (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    audit_run_id    UUID NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+    control_id      TEXT,
+    event_type      TEXT NOT NULL CHECK (event_type IN (
+        'VIOLATION_DETECTED', 'REMEDIATION_PROPOSED', 'DECISION_MADE',
+        'APPROVED', 'REJECTED', 'APPLIED', 'VERIFICATION_FAILED',
+        'ROLLED_BACK', 'REPORT_GENERATED'
+    )),
+    actor           TEXT NOT NULL DEFAULT 'system',
+    ruleset_version TEXT,
+    payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_events_run
+    ON ledger_events (audit_run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_events_run_control
+    ON ledger_events (audit_run_id, control_id, event_type, created_at);

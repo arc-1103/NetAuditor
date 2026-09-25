@@ -96,6 +96,22 @@ async def sqlite_session(monkeypatch):
         await conn.execute(
             text(
                 """
+                CREATE TABLE ledger_events (
+                    id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    audit_run_id    TEXT NOT NULL,
+                    control_id      TEXT,
+                    event_type      TEXT NOT NULL,
+                    actor           TEXT NOT NULL DEFAULT 'system',
+                    ruleset_version TEXT,
+                    payload         TEXT NOT NULL DEFAULT '{}',
+                    created_at      TEXT
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
                 CREATE TABLE configuration_anomalies (
                     audit_run_id  TEXT PRIMARY KEY,
                     device_id     TEXT NOT NULL,
@@ -311,6 +327,66 @@ async def test_save_anomaly_upserts_by_audit_run_id(sqlite_session):
 
     assert run["anomaly"]["status"] == "scored"
     assert run["anomaly"]["peer_count"] == 6
+
+
+async def test_save_findings_records_a_violation_detected_event_per_control(sqlite_session):
+    await db.save_findings(RUN_ID, [_finding("CIS-IOS-1.1.1"), _finding("CIS-IOS-1.1.2", "CRITICAL", 40)])
+
+    async with sqlite_session() as session:
+        rows = (await session.execute(
+            text("SELECT control_id, event_type, ruleset_version FROM ledger_events WHERE audit_run_id=:id"),
+            {"id": RUN_ID},
+        )).mappings().all()
+
+    assert {r["control_id"] for r in rows} == {"CIS-IOS-1.1.1", "CIS-IOS-1.1.2"}
+    assert all(r["event_type"] == "VIOLATION_DETECTED" for r in rows)
+    assert all(r["ruleset_version"] == db.POLICY_BUNDLE_VERSION for r in rows)
+
+
+async def test_re_evaluation_does_not_reset_a_still_failing_controls_detection_time(sqlite_session):
+    """MTTR (docs/Additional-Features.md §5) measures from first detection —
+    a policy-bundle re-evaluation replaces compliance_findings rows (see
+    save_findings' docstring) but must not emit a second VIOLATION_DETECTED
+    for a control that was already open."""
+    await db.save_findings(RUN_ID, [_finding("CIS-IOS-1.1.1")])
+    await db.save_findings(RUN_ID, [_finding("CIS-IOS-1.1.1")])  # re-evaluated, still failing
+
+    async with sqlite_session() as session:
+        count = (await session.execute(
+            text("SELECT count(*) FROM ledger_events WHERE audit_run_id=:id AND control_id='CIS-IOS-1.1.1'"),
+            {"id": RUN_ID},
+        )).scalar_one()
+
+    assert count == 1
+
+
+async def test_save_findings_returns_only_the_newly_detected_findings(sqlite_session):
+    first = await db.save_findings(RUN_ID, [_finding("CIS-IOS-1.1.1"), _finding("CIS-IOS-1.1.2", "CRITICAL", 40)])
+    assert {f["control_id"] for f in first} == {"CIS-IOS-1.1.1", "CIS-IOS-1.1.2"}
+
+    second = await db.save_findings(RUN_ID, [_finding("CIS-IOS-1.1.1"), _finding("CIS-IOS-1.1.3", "LOW", 5)])
+    assert {f["control_id"] for f in second} == {"CIS-IOS-1.1.3"}  # 1.1.1 was already known
+
+
+async def test_get_findings_by_run_groups_only_evaluated_runs(sqlite_session):
+    await db.save_findings(RUN_ID, [_finding("CIS-IOS-1.1.1")])
+
+    by_run = await db.get_findings_by_run()
+
+    assert by_run == {RUN_ID: [{"control_id": "CIS-IOS-1.1.1", "severity": "HIGH"}]}
+
+
+async def test_get_findings_by_run_excludes_runs_never_evaluated(sqlite_session):
+    async with sqlite_session() as session:
+        await session.execute(
+            text("INSERT INTO audit_runs (id, file_hash, storage_path, status) VALUES (:id, 'x', 'y', 'INGESTED')"),
+            {"id": "33333333-3333-3333-3333-333333333333"},
+        )
+        await session.commit()
+
+    by_run = await db.get_findings_by_run()
+
+    assert by_run == {}
 
 
 async def test_save_anomaly_defaults_missing_fields_to_none(sqlite_session):

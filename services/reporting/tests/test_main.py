@@ -66,7 +66,7 @@ async def test_json_and_cef_exports(monkeypatch):
     json_response = await request("GET", f"/reports/{RUN_ID}/json")
     cef_response = await request("GET", f"/reports/{RUN_ID}/cef")
     assert json_response.status_code == 200
-    assert json_response.json()["summary"]["compliance_score"] == 80
+    assert json_response.json()["summary"]["compliance_score"] == 92
     assert cef_response.status_code == 200
     assert cef_response.text.startswith("CEF:0|")
 

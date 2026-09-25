@@ -56,8 +56,7 @@ Four separate attack surfaces — treat as four items, not one:
 
 **Problem (from slide 8, amber item):** `audit_runs` persists state, but findings are replaced on re-evaluation — it's an auditable run record, not an append-only ledger, despite the "evidence-linked, reproducible" framing.
 
-- 🔴 Redesign the data model so findings are appended with a version/timestamp, never overwritten. Old findings remain queryable against the config version that produced them.
-- **Owner:** backend/data-model owner. **Weeks:** 1–4 (do this early — later findings will depend on the current schema, making it more expensive to fix the longer it waits).
+- 🟢 Built as `ledger_events` (`infra/postgres/migrations/0006_add_ledger_events.sql`) — a separate append-only event stream (VIOLATION_DETECTED, REMEDIATION_PROPOSED, DECISION_MADE, APPROVED/REJECTED, APPLIED, VERIFICATION_FAILED, ROLLED_BACK, REPORT_GENERATED), not a redesign of `compliance_findings` itself, which stays current-state/replace-on-re-evaluation as before. `compliance_findings` remains the queryable "what does this run look like now" table; `ledger_events` is the "what happened and when" trail MTTR (docs/Additional-Features.md §5), rollback (§3), approval provenance (§7), and the webhook dispatcher (§8) all read from. Old findings snapshots by evaluation are still separately available via the pre-existing `audit_evaluations` table. **Owner:** backend/data-model owner. **Verified:** 2026-09-25.
 
 ---
 
