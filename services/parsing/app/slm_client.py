@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as ProcessTimeoutError
 from typing import Any
 
 import httpx
@@ -15,6 +18,41 @@ class SLMError(RuntimeError):
 
 class SLMTimeout(SLMError):
     pass
+
+
+# The mock parser's regex extraction (_mock_response_worker below) is
+# CPU-bound and synchronous: a pathologically crafted chunk (see
+# docs/ArchitecturalChanges.md §3, "regex catastrophic backtracking") could
+# in principle run unbounded. Python's GIL means a thread-based timeout
+# cannot forcibly stop a runaway match — only a separate OS process can be
+# killed from outside — so this runs in a real subprocess with a hard
+# wall-clock deadline, not a thread.
+PARSE_TIMEOUT_SECONDS = float(os.getenv("PARSE_TIMEOUT_SECONDS", "5.0"))
+_executor = ProcessPoolExecutor(max_workers=1)
+
+
+def _reset_executor() -> None:
+    """Swap in a fresh pool after a timeout so the NEXT chunk lands on a
+    live process instead of queuing behind one that may still be wedged in
+    a runaway match — this is what actually protects throughput for the
+    max_workers=1 pool. Best-effort kill the old pool's worker process too,
+    so it doesn't just leak a CPU core forever.
+
+    ponytail: `_processes` is an undocumented ProcessPoolExecutor internal,
+    so the kill is guarded — if it ever stops working, the pool swap above
+    still keeps the service running; only the leaked process would need a
+    manual restart to reclaim. Upgrade path: a supervised subprocess pool
+    with an explicit handle to each worker's PID.
+    """
+    global _executor
+    old_executor = _executor
+    _executor = ProcessPoolExecutor(max_workers=1)
+    try:
+        for proc in old_executor._processes.values():  # type: ignore[attr-defined]
+            proc.kill()
+    except Exception:
+        pass
+    old_executor.shutdown(wait=False, cancel_futures=True)
 
 
 REVERSE_TRANSLATE_SCHEMA = {
@@ -47,7 +85,7 @@ class OllamaSLMClient:
         device_context: DeviceContext,
     ) -> SLMResult:
         if self.mock:
-            return self._mock_response(config_text, device_context)
+            return await self._mock_response(config_text, device_context)
 
         payload = {
             "model": self.model,
@@ -181,139 +219,155 @@ class OllamaSLMClient:
 
         return "\n".join(lines)
 
-    def _mock_response(self, text: str, context: DeviceContext) -> SLMResult:
-        """Deterministic extraction of only facts observable in this chunk.
+    async def _mock_response(self, text: str, context: DeviceContext) -> SLMResult:
+        """Runs the actual extraction (_mock_response_worker) in a real
+        subprocess with a hard wall-clock deadline — see PARSE_TIMEOUT_SECONDS
+        above for why a subprocess, not a thread."""
+        loop = asyncio.get_running_loop()
+        future = _executor.submit(_mock_response_worker, text, context)
+        try:
+            return await loop.run_in_executor(None, future.result, PARSE_TIMEOUT_SECONDS)
+        except ProcessTimeoutError as exc:
+            _reset_executor()
+            raise SLMTimeout("Mock extraction exceeded the hard parse timeout") from exc
 
-        Every pattern here is tried unconditionally, regardless of
-        `context.vendor` — a real SLM doesn't need to be told the vendor's
-        name to recognize "ssh version 2" or "set system host-name", and
-        gating extraction on a regex-recognized vendor string is exactly the
-        kind of hardcoding that fails on anything the fingerprinter has
-        never seen. Confidence reflects how much of this chunk was actually
-        understood (how many fields were found), not whether the vendor was
-        named — an unrecognized vendor that still yields real fields should
-        not be penalized the way a chunk with genuinely nothing in it is.
-        """
-        result: dict[str, Any] = {
-            "schema_version": "1.0.0",
-            "device": {
-                "detected_vendor": context.vendor,
-                "detected_os": context.os,
-                "detected_os_version": context.os_version,
-                "detected_hardware_model": context.hardware_model,
-            },
-        }
-        fields_found = 0
 
-        hostname = (
-            _first_match(text, r"(?im)^\s*hostname\s+(\S+)")
-            or _first_match(text, r"(?im)^\s*set\s+system\s+host-name\s+(\S+)")
-            or _first_match(text, r"(?im)^\s*set\s+deviceconfig\s+system\s+hostname\s+(\S+)")
-        )
-        if hostname:
-            result["device"]["raw_hostname"] = hostname
-            fields_found += 1
+def _mock_response_worker(text: str, context: DeviceContext) -> SLMResult:
+    """Deterministic extraction of only facts observable in this chunk.
 
-        ssh_version = _first_match(text, r"(?im)^\s*ip\s+ssh\s+version\s+([12])\s*$")
-        if ssh_version:
-            result["ssh"] = {"enabled": True, "version": ssh_version}
-            fields_found += 1
+    Every pattern here is tried unconditionally, regardless of
+    `context.vendor` — a real SLM doesn't need to be told the vendor's
+    name to recognize "ssh version 2" or "set system host-name", and
+    gating extraction on a regex-recognized vendor string is exactly the
+    kind of hardcoding that fails on anything the fingerprinter has
+    never seen. Confidence reflects how much of this chunk was actually
+    understood (how many fields were found), not whether the vendor was
+    named — an unrecognized vendor that still yields real fields should
+    not be penalized the way a chunk with genuinely nothing in it is.
 
-        if re.search(r"(?im)^\s*no\s+transport\s+input\s+telnet\b", text):
-            result["telnet"] = {"enabled": "DISABLED"}
-            fields_found += 1
-        elif re.search(r"(?im)^\s*transport\s+input\s+telnet\b", text):
-            result["telnet"] = {"enabled": "ENABLED"}
-            fields_found += 1
-        elif re.search(r"(?im)^\s*set\s+admin-telnet\s+disable\b", text):
-            result["telnet"] = {"enabled": "DISABLED"}
-            fields_found += 1
-        elif re.search(r"(?im)^\s*set\s+admin-telnet\s+enable\b", text):
-            result["telnet"] = {"enabled": "ENABLED"}
-            fields_found += 1
+    Module-level (not a method) so it can be pickled and run in a
+    subprocess — see OllamaSLMClient._mock_response.
+    """
+    result: dict[str, Any] = {
+        "schema_version": "1.0.0",
+        "device": {
+            "detected_vendor": context.vendor,
+            "detected_os": context.os,
+            "detected_os_version": context.os_version,
+            "detected_hardware_model": context.hardware_model,
+        },
+    }
+    fields_found = 0
 
-        if re.search(r"(?im)^\s*service\s+password-encryption\b", text):
-            result["aaa"] = {"password_encryption": "ENABLED"}
-            fields_found += 1
-        elif re.search(r"(?im)^\s*no\s+service\s+password-encryption\b", text):
-            result["aaa"] = {"password_encryption": "DISABLED"}
-            fields_found += 1
+    hostname = (
+        _first_match(text, r"(?im)^\s*hostname\s+(\S+)")
+        or _first_match(text, r"(?im)^\s*set\s+system\s+host-name\s+(\S+)")
+        or _first_match(text, r"(?im)^\s*set\s+deviceconfig\s+system\s+hostname\s+(\S+)")
+    )
+    if hostname:
+        result["device"]["raw_hostname"] = hostname
+        fields_found += 1
 
-        if re.search(r"(?im)^\s*no\s+ip\s+http\s+server\b", text):
-            result["services"] = {"http_server_enabled": "DISABLED"}
-            fields_found += 1
-        elif re.search(r"(?im)^\s*ip\s+http\s+server\b", text):
-            result["services"] = {"http_server_enabled": "ENABLED"}
-            fields_found += 1
-        elif re.search(r"(?im)^\s*set\s+allowaccess\s+.*\bhttp\b", text):
-            result["services"] = {"http_server_enabled": "ENABLED"}
-            fields_found += 1
+    ssh_version = _first_match(text, r"(?im)^\s*ip\s+ssh\s+version\s+([12])\s*$")
+    if ssh_version:
+        result["ssh"] = {"enabled": True, "version": ssh_version}
+        fields_found += 1
 
-        if re.search(r"(?im)^\s*logging\s+host\s+(\S+)", text):
-            hosts = re.findall(r"(?im)^\s*logging\s+host\s+(\S+)", text)
-            result["logging"] = {"syslog_enabled": True, "syslog_hosts": hosts}
-            fields_found += 1
+    if re.search(r"(?im)^\s*no\s+transport\s+input\s+telnet\b", text):
+        result["telnet"] = {"enabled": "DISABLED"}
+        fields_found += 1
+    elif re.search(r"(?im)^\s*transport\s+input\s+telnet\b", text):
+        result["telnet"] = {"enabled": "ENABLED"}
+        fields_found += 1
+    elif re.search(r"(?im)^\s*set\s+admin-telnet\s+disable\b", text):
+        result["telnet"] = {"enabled": "DISABLED"}
+        fields_found += 1
+    elif re.search(r"(?im)^\s*set\s+admin-telnet\s+enable\b", text):
+        result["telnet"] = {"enabled": "ENABLED"}
+        fields_found += 1
 
-        if re.search(r"(?im)^\s*ntp\s+server\s+(\S+)", text):
-            servers = re.findall(r"(?im)^\s*ntp\s+server\s+(\S+)", text)
-            result["ntp"] = {"enabled": True, "servers": servers}
-            if re.search(r"(?im)^\s*ntp\s+authenticate\b", text):
-                result["ntp"]["authentication_enabled"] = True
-            fields_found += 1
+    if re.search(r"(?im)^\s*service\s+password-encryption\b", text):
+        result["aaa"] = {"password_encryption": "ENABLED"}
+        fields_found += 1
+    elif re.search(r"(?im)^\s*no\s+service\s+password-encryption\b", text):
+        result["aaa"] = {"password_encryption": "DISABLED"}
+        fields_found += 1
 
-        if re.search(r"(?im)^\s*banner\s+login\b", text):
-            result["banners"] = {"login_banner_present": True}
-            fields_found += 1
+    if re.search(r"(?im)^\s*no\s+ip\s+http\s+server\b", text):
+        result["services"] = {"http_server_enabled": "DISABLED"}
+        fields_found += 1
+    elif re.search(r"(?im)^\s*ip\s+http\s+server\b", text):
+        result["services"] = {"http_server_enabled": "ENABLED"}
+        fields_found += 1
+    elif re.search(r"(?im)^\s*set\s+allowaccess\s+.*\bhttp\b", text):
+        result["services"] = {"http_server_enabled": "ENABLED"}
+        fields_found += 1
 
-        snmp_communities: list[str] = re.findall(r"(?im)^\s*snmp-server\s+community\s+(\S+)", text)
-        snmp_block = re.search(r"(?is)config\s+system\s+snmp\s+community\b(.*?)\bend\b", text)
-        if snmp_block:
-            snmp_communities += re.findall(r'(?im)^\s*set\s+name\s+"([^"]+)"', snmp_block.group(1))
-        if snmp_communities:
-            result["snmp"] = {"enabled": True, "community_strings": snmp_communities}
-            fields_found += 1
+    if re.search(r"(?im)^\s*logging\s+host\s+(\S+)", text):
+        hosts = re.findall(r"(?im)^\s*logging\s+host\s+(\S+)", text)
+        result["logging"] = {"syslog_enabled": True, "syslog_hosts": hosts}
+        fields_found += 1
 
-        ike_policies: list[dict[str, Any]] = []
-        for block in re.finditer(r"(?im)^crypto\s+isakmp\s+policy\s+(\d+)\s*\n((?:^[ \t]+.*\n?)*)", text):
-            enc_match = re.search(r"(?im)^\s*encryption\s+(\S+)", block.group(2))
-            mapped = _map_encryption(enc_match.group(1)) if enc_match else None
-            if mapped:
-                ike_policies.append({"policy_id": int(block.group(1)), "encryption": mapped})
+    if re.search(r"(?im)^\s*ntp\s+server\s+(\S+)", text):
+        servers = re.findall(r"(?im)^\s*ntp\s+server\s+(\S+)", text)
+        result["ntp"] = {"enabled": True, "servers": servers}
+        if re.search(r"(?im)^\s*ntp\s+authenticate\b", text):
+            result["ntp"]["authentication_enabled"] = True
+        fields_found += 1
 
-        fortios_ike = re.search(r"(?is)config\s+vpn\s+ipsec\s+phase1-interface\b(.*?)\bend\b", text)
-        if fortios_ike:
-            proposal = re.search(r"(?im)^\s*set\s+proposal\s+(.+)$", fortios_ike.group(1))
-            if proposal:
-                seen: set[str] = set()
-                for token in proposal.group(1).split():
-                    mapped = _map_encryption(token.split("-")[0])
-                    if mapped and mapped not in seen:
-                        seen.add(mapped)
-                        ike_policies.append({"policy_id": None, "encryption": mapped})
+    if re.search(r"(?im)^\s*banner\s+login\b", text):
+        result["banners"] = {"login_banner_present": True}
+        fields_found += 1
 
-        if ike_policies:
-            result["crypto"] = {"ike_policies": ike_policies}
-            fields_found += 1
+    snmp_communities: list[str] = re.findall(r"(?im)^\s*snmp-server\s+community\s+(\S+)", text)
+    snmp_block = re.search(r"(?is)config\s+system\s+snmp\s+community\b(.*?)\bend\b", text)
+    if snmp_block:
+        snmp_communities += re.findall(r'(?im)^\s*set\s+name\s+"([^"]+)"', snmp_block.group(1))
+    if snmp_communities:
+        result["snmp"] = {"enabled": True, "community_strings": snmp_communities}
+        fields_found += 1
 
-        # Topology facts for GraphRAG (services/compliance/app/graph_client.py).
-        # Deliberately excluded from fields_found/parsing_confidence: that
-        # score gates whether a baseline is trusted enough to reach
-        # Compliance's CIS/NIST/STIG evaluation, and topology has no bearing
-        # on that verdict — it only feeds blast-radius tracing once a finding
-        # already exists.
-        topology = _extract_topology(text)
-        if topology:
-            result["topology"] = topology
+    ike_policies: list[dict[str, Any]] = []
+    for block in re.finditer(r"(?im)^crypto\s+isakmp\s+policy\s+(\d+)\s*\n((?:^[ \t]+.*\n?)*)", text):
+        enc_match = re.search(r"(?im)^\s*encryption\s+(\S+)", block.group(2))
+        mapped = _map_encryption(enc_match.group(1)) if enc_match else None
+        if mapped:
+            ike_policies.append({"policy_id": int(block.group(1)), "encryption": mapped})
 
-        confidence = min(0.95, 0.5 + 0.15 * fields_found) if fields_found else 0.20
-        result["device"]["parsing_confidence"] = confidence
+    fortios_ike = re.search(r"(?is)config\s+vpn\s+ipsec\s+phase1-interface\b(.*?)\bend\b", text)
+    if fortios_ike:
+        proposal = re.search(r"(?im)^\s*set\s+proposal\s+(.+)$", fortios_ike.group(1))
+        if proposal:
+            seen: set[str] = set()
+            for token in proposal.group(1).split():
+                mapped = _map_encryption(token.split("-")[0])
+                if mapped and mapped not in seen:
+                    seen.add(mapped)
+                    ike_policies.append({"policy_id": None, "encryption": mapped})
 
-        # No real decoder runs in mock mode, so there are no real token
-        # logprobs. Deriving a plausible mean_logprob from the same
-        # fields-found signal as parsing_confidence keeps the active-learning
-        # gate in worker.py exercisable under USE_MOCK_SLM=true (the default)
-        # without claiming a precision mock logprobs don't have.
-        return SLMResult(value=result, mean_logprob=confidence - 1.0)
+    if ike_policies:
+        result["crypto"] = {"ike_policies": ike_policies}
+        fields_found += 1
+
+    # Topology facts for GraphRAG (services/compliance/app/graph_client.py).
+    # Deliberately excluded from fields_found/parsing_confidence: that
+    # score gates whether a baseline is trusted enough to reach
+    # Compliance's CIS/NIST/STIG evaluation, and topology has no bearing
+    # on that verdict — it only feeds blast-radius tracing once a finding
+    # already exists.
+    topology = _extract_topology(text)
+    if topology:
+        result["topology"] = topology
+
+    confidence = min(0.95, 0.5 + 0.15 * fields_found) if fields_found else 0.20
+    result["device"]["parsing_confidence"] = confidence
+
+    # No real decoder runs in mock mode, so there are no real token
+    # logprobs. Deriving a plausible mean_logprob from the same
+    # fields-found signal as parsing_confidence keeps the active-learning
+    # gate in worker.py exercisable under USE_MOCK_SLM=true (the default)
+    # without claiming a precision mock logprobs don't have.
+    return SLMResult(value=result, mean_logprob=confidence - 1.0)
 
 
 def _first_match(text: str, pattern: str) -> str | None:

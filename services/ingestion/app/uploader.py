@@ -23,15 +23,16 @@ MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
 _minio_client = None
 
-# Line-oriented patterns for common network-device secret formats. Each
+# Line-oriented patterns for common network-device secret formats, each
+# paired with a short label identifying the kind of credential. Each
 # pattern keeps the directive/type tokens and redacts only the trailing
 # secret value, so the surrounding config structure stays intact for
 # parsing downstream.
 CREDENTIAL_PATTERNS = [
-    re.compile(r"(?im)^(\s*enable\s+(?:secret|password)\s+(?:\d+\s+)?)(\S+)\s*$"),
-    re.compile(r"(?im)^(\s*username\s+\S+(?:\s+\S+)*?\s+(?:secret|password)\s+(?:\d+\s+)?)(\S+)\s*$"),
-    re.compile(r"(?im)^(\s*password\s+(?:\d+\s+)?)(\S+)\s*$"),
-    re.compile(r"(?im)^(\s*(?:wpa-psk|pre-shared-key|key)\s+(?:ascii|hex)?\s*)(\S+)\s*$"),
+    ("enable_secret", re.compile(r"(?im)^(\s*enable\s+(?:secret|password)\s+(?:\d+\s+)?)(\S+)\s*$")),
+    ("username_secret", re.compile(r"(?im)^(\s*username\s+\S+(?:\s+\S+)*?\s+(?:secret|password)\s+(?:\d+\s+)?)(\S+)\s*$")),
+    ("plain_password", re.compile(r"(?im)^(\s*password\s+(?:\d+\s+)?)(\S+)\s*$")),
+    ("psk_key", re.compile(r"(?im)^(\s*(?:wpa-psk|pre-shared-key|key)\s+(?:ascii|hex)?\s*)(\S+)\s*$")),
 ]
 
 # "public"/"private" are well-known SNMP defaults, not secrets — compliance
@@ -51,9 +52,40 @@ def redact_credentials(text: str) -> str:
     }
     for community in custom_communities:
         redacted = re.sub(rf"(?<!\S){re.escape(community)}(?!\S)", "[REDACTED]", redacted)
-    for pattern in CREDENTIAL_PATTERNS:
+    for _label, pattern in CREDENTIAL_PATTERNS:
         redacted = pattern.sub(lambda m: m.group(1) + "[REDACTED]", redacted)
     return redacted
+
+
+def _mask_secret(value: str) -> str:
+    """Last 4 characters only — enough for a human to confirm which secret
+    a finding refers to (e.g. across two findings, or against a known-weak
+    password list by hash) without ever reconstructing it. A secret under 4
+    characters is masked completely rather than partially revealed in full."""
+    if len(value) < 4:
+        return "*" * len(value) if value else ""
+    return "*" * (len(value) - 4) + value[-4:]
+
+
+def capture_credential_evidence(text: str) -> list[dict]:
+    """Evidence captured from the RAW (pre-redaction) text — see
+    docs/ArchitecturalChanges.md §2. Never the raw secret itself: only a
+    trailing-4-char mask, the line it was found on, and a SHA-256 of the
+    real value so a reviewer can confirm two findings share a secret, or
+    check it against a known-weak-password hash list later."""
+    evidence = []
+    for pattern_type, pattern in CREDENTIAL_PATTERNS:
+        for match in pattern.finditer(text):
+            value = match.group(2)
+            evidence.append(
+                {
+                    "pattern_type": pattern_type,
+                    "line_number": text.count("\n", 0, match.start()) + 1,
+                    "masked_value": _mask_secret(value),
+                    "sha256": hashlib.sha256(value.encode()).hexdigest(),
+                }
+            )
+    return evidence
 
 
 def get_minio_client() -> Minio:
@@ -95,7 +127,9 @@ async def validate_and_store(file) -> dict:
 
     client = get_minio_client()
 
-    redacted_text = redact_credentials(contents.decode("utf-8", errors="replace"))
+    decoded_text = contents.decode("utf-8", errors="replace")
+    credential_evidence = capture_credential_evidence(decoded_text)
+    redacted_text = redact_credentials(decoded_text)
     redacted_bytes = redacted_text.encode("utf-8")
     client.put_object(
         MINIO_BUCKET,
@@ -110,4 +144,5 @@ async def validate_and_store(file) -> dict:
         "storage_path": storage_path,
         "original_filename": file.filename,
         "raw_text": redacted_text,
+        "credential_evidence": credential_evidence,
     }

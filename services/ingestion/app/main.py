@@ -54,6 +54,8 @@ async def upload_config(
 
     run_id = str(uuid.uuid4())
     await create_audit_run(run_id, stored, uploaded_by)
+    # `credential_evidence` (from validate_and_store) is already persisted
+    # inside create_audit_run — see docs/ArchitecturalChanges.md §2.
 
     chunks = chunk_config(stored["raw_text"])
     job = enqueue_parsing_job(run_id, stored, chunks, uploaded_by)

@@ -32,3 +32,23 @@ def test_default_max_lines_is_500():
     chunks = chunk_config(text)
 
     assert len(chunks) == 2
+
+
+def test_a_pathologically_long_line_is_truncated():
+    long_line = "a" * 5000
+    text = f"hostname r1\n{long_line}\ninterface Gi0/1\n"
+
+    chunks = chunk_config(text, max_line_length=2000)
+
+    lines = chunks[0].splitlines()
+    assert lines[0] == "hostname r1"
+    assert lines[1] == "a" * 2000 + "...[truncated]"
+    assert lines[2] == "interface Gi0/1"
+
+
+def test_normal_lines_are_unaffected_by_the_length_cap():
+    text = "hostname r1\ninterface Gi0/1\n description uplink\n"
+
+    chunks = chunk_config(text, max_line_length=2000)
+
+    assert chunks[0] == text.rstrip("\n")

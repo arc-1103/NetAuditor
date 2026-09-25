@@ -119,6 +119,37 @@ async def test_stores_new_file_and_redacts_credentials(fake_minio):
     written = args[2].read()
     assert b"verysecrethash" not in written
 
+    # Masked evidence captured before redaction (docs/ArchitecturalChanges.md §2):
+    # never the raw secret, only a trailing mask, line number, and a hash a
+    # reviewer can use to confirm two findings share a secret.
+    evidence = result["credential_evidence"]
+    by_type = {item["pattern_type"]: item for item in evidence}
+    enable_secret_value = "$1$abc$verysecrethash"
+    assert by_type["enable_secret"]["line_number"] == 2
+    assert by_type["enable_secret"]["masked_value"] == "*" * (len(enable_secret_value) - 4) + "hash"
+    assert by_type["enable_secret"]["sha256"] == hashlib.sha256(enable_secret_value.encode()).hexdigest()
+    assert by_type["username_secret"]["line_number"] == 3
+    for item in evidence:
+        assert "verysecrethash" not in item["masked_value"]
+        assert "anothersecret" not in item["masked_value"]
+
+
+async def test_credential_evidence_is_empty_when_nothing_matches(fake_minio):
+    file = FakeUploadFile("device.cfg", b"hostname router1\ninterface Gi0/1\n")
+
+    result = await uploader.validate_and_store(file)
+
+    assert result["credential_evidence"] == []
+
+
+def test_mask_secret_fully_masks_short_values():
+    assert uploader._mask_secret("abc") == "***"
+    assert uploader._mask_secret("") == ""
+
+
+def test_mask_secret_keeps_only_last_four_characters():
+    assert uploader._mask_secret("hunter2verysecret") == "*" * 13 + "cret"
+
 
 async def test_rewrites_already_stored_object_instead_of_rejecting(monkeypatch):
     # Dedup is now Postgres's job (see app.db.get_audit_run_id_by_hash),

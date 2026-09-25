@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import pytest
+from jinja2.exceptions import SecurityError
 
 from app import template_engine
-from app.template_engine import RemediationTemplateError
+from app.template_engine import RemediationTemplateError, _environment
 
 
 EXPECTED = {
@@ -61,4 +62,13 @@ def test_newline_in_context_value_is_rejected_to_prevent_cli_injection():
 def test_path_traversal_and_non_templates_are_rejected(name):
     with pytest.raises(RemediationTemplateError):
         template_engine.render_template(name)
+
+
+def test_environment_is_sandboxed_against_ssti_attribute_chain_attacks():
+    """Defense-in-depth: SandboxedEnvironment must block attribute-chain
+    sandbox-escape payloads even though today's context values are always
+    plain scalars/dicts, never attacker-controlled objects."""
+    malicious = "{{ ''.__class__.__mro__[1].__subclasses__() }}"
+    with pytest.raises(SecurityError):
+        _environment().from_string(malicious).render()
 

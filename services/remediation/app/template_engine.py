@@ -4,7 +4,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateNotFound
+from jinja2 import FileSystemLoader, StrictUndefined, TemplateNotFound
+from jinja2.sandbox import SandboxedEnvironment
 
 TEMPLATE_DIR = Path(os.getenv("TEMPLATE_DIR", Path(__file__).parents[1] / "templates")).resolve()
 
@@ -13,8 +14,8 @@ class RemediationTemplateError(ValueError):
     pass
 
 
-def _environment() -> Environment:
-    return Environment(
+def _environment() -> SandboxedEnvironment:
+    return SandboxedEnvironment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         undefined=StrictUndefined,
         autoescape=False,

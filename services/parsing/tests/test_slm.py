@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
+from app import slm_client as slm_client_module
 from app.models import DeviceContext
-from app.slm_client import OllamaSLMClient, SLMError
+from app.slm_client import OllamaSLMClient, SLMError, SLMTimeout
 
 DEMO_DIR = Path(__file__).resolve().parents[3] / "demo"
 
@@ -356,3 +357,60 @@ async def test_mock_slm_produces_required_findings_fields_for_fortinet_demo_fixt
     assert encryptions == {"DES", "3DES"}
     assert result.value["telnet"] == {"enabled": "ENABLED"}
     assert result.value["services"] == {"http_server_enabled": "ENABLED"}
+
+
+@pytest.mark.asyncio
+async def test_mock_extraction_runs_in_a_subprocess_and_survives_a_timeout(monkeypatch):
+    """docs/ArchitecturalChanges.md §3: a pathological chunk must be
+    forcibly bounded by a real subprocess deadline, not just a thread-based
+    one Python's GIL can't actually enforce. A near-zero timeout against a
+    freshly (re)started pool reliably trips, since spawning the worker
+    process itself already takes longer than this."""
+    slm_client_module._reset_executor()
+    monkeypatch.setattr(slm_client_module, "PARSE_TIMEOUT_SECONDS", 1e-6)
+    client = OllamaSLMClient("http://unused", "model", mock=True)
+    context = DeviceContext("cisco", "IOS-XE", None, None, None, 0.96)
+
+    with pytest.raises(SLMTimeout):
+        await client.generate("prompt", "hostname r1\n", {}, device_context=context)
+
+
+def _sleep_worker(seconds: float) -> str:
+    import time
+
+    time.sleep(seconds)
+    return "done"
+
+
+def test_reset_executor_unblocks_the_next_submission_instead_of_queuing_behind_a_stuck_one():
+    """With max_workers=1, a genuinely stuck worker would otherwise queue
+    every later chunk behind it forever. _reset_executor() must hand out a
+    fresh pool so the NEXT submission runs immediately rather than waiting
+    on the old (still-running) process."""
+    import time
+
+    slm_client_module._reset_executor()
+    stuck_executor = slm_client_module._executor
+    stuck_future = stuck_executor.submit(_sleep_worker, 30)
+
+    slm_client_module._reset_executor()
+    fresh_future = slm_client_module._executor.submit(_sleep_worker, 0)
+
+    start = time.monotonic()
+    assert fresh_future.result(timeout=5.0) == "done"
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5.0, "the fresh pool must not queue behind the old stuck worker"
+    # The old process actually gets killed, not just abandoned: its future
+    # resolves (with BrokenProcessPool) instead of staying pending forever.
+    assert stuck_future.done()
+    with pytest.raises(Exception):
+        stuck_future.result(timeout=0)
+
+
+def test_reset_executor_swaps_in_a_new_pool():
+    before = slm_client_module._executor
+    slm_client_module._reset_executor()
+    after = slm_client_module._executor
+
+    assert after is not before

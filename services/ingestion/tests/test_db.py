@@ -3,6 +3,8 @@ Unit tests for app.db.create_audit_run. Runs against an in-memory SQLite
 database standing in for Postgres, so no live database is required — the
 INSERT statement itself is plain SQL, not Postgres-specific.
 """
+import json
+
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -24,7 +26,8 @@ async def sqlite_session(monkeypatch):
                     storage_path      TEXT NOT NULL,
                     uploaded_by       TEXT,
                     status            TEXT NOT NULL DEFAULT 'INGESTED',
-                    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    credential_evidence TEXT
                 )
                 """
             )
@@ -78,3 +81,37 @@ async def test_get_audit_run_id_by_hash_returns_the_run_after_insert(sqlite_sess
 
 async def test_get_audit_run_id_by_hash_returns_none_when_absent(sqlite_session):
     assert await db.get_audit_run_id_by_hash("h" * 64) is None
+
+
+async def test_create_audit_run_persists_credential_evidence(sqlite_session):
+    evidence = [{"pattern_type": "enable_secret", "line_number": 2, "masked_value": "****", "sha256": "a" * 64}]
+    stored = {
+        "file_hash": "i" * 64,
+        "storage_path": "raw-configs/iii.cfg",
+        "original_filename": "device.cfg",
+        "credential_evidence": evidence,
+    }
+
+    await db.create_audit_run("run-4", stored, None)
+
+    async with sqlite_session() as session:
+        result = await session.execute(
+            text("SELECT credential_evidence FROM audit_runs WHERE id = :id"), {"id": "run-4"}
+        )
+        row = result.mappings().first()
+
+    assert json.loads(row["credential_evidence"]) == evidence
+
+
+async def test_create_audit_run_defaults_credential_evidence_to_empty_list(sqlite_session):
+    stored = {"file_hash": "j" * 64, "storage_path": "raw-configs/jjj.cfg", "original_filename": "device.cfg"}
+
+    await db.create_audit_run("run-5", stored, None)
+
+    async with sqlite_session() as session:
+        result = await session.execute(
+            text("SELECT credential_evidence FROM audit_runs WHERE id = :id"), {"id": "run-5"}
+        )
+        row = result.mappings().first()
+
+    assert json.loads(row["credential_evidence"]) == []
