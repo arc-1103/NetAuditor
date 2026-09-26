@@ -41,8 +41,8 @@ Demo `demo/cisco_insecure.cfg`:
 4. Enable approval only for `SAFE` proposals; retain operator attribution.
 5. Export a device report in browser/PDF plus JSON and CEF.
 
-Also validated: Fortinet fixture, RBAC gateway, immutable evaluation versions,
-offline UI fallback and optional local Qwen explanation.
+Also validated: deterministic Cisco, Fortinet, Juniper, Palo Alto and Arista
+fixtures, RBAC gateway, immutable versions and an offline UI fallback.
 
 Visual: dashboard screenshot with evidence line and SAFE approval state.
 
@@ -56,8 +56,9 @@ Visual: dashboard screenshot with evidence line and SAFE approval state.
 | Defensible output | Source lines + policy/schema/baseline versions |
 | Sovereign deployment | Local services; no cloud dependency at runtime |
 
-**Demonstrated today:** Cisco IOS-XE and Fortinet FortiOS, single-file upload,
-one 11-control CIS-inspired policy bundle. This is not CIS certification.
+**Demonstrated today:** five-vendor deterministic synthetic-fixture corpus,
+single-file upload and one 11-control CIS-inspired policy bundle. This is not
+CIS certification or independent real-device validation.
 
 Visual: green checks for demonstrated capability; grey roadmap tags for bulk UI,
 complete framework content and additional validated vendors.
@@ -66,7 +67,7 @@ complete framework content and additional validated vendors.
 
 **Next 90 days**
 
-- Validate Juniper/Palo Alto adapters and add bulk inventory ingestion.
+- Validate all five adapters against representative real devices and add bulk ingestion.
 - Encode authorized CIS, NIST, STIG and ISO mappings as versioned bundles.
 - Wire the learning queue into the dashboard and benchmark false mappings.
 - Pilot with sanitized configurations; measure audit time, precision/recall and

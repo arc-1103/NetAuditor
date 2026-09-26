@@ -14,15 +14,15 @@ it never decides whether a control passes or fails.
 | Upload, SHA-256 fingerprinting, MinIO storage | Implemented |
 | Schema-constrained local parsing | Deterministic mock and Ollama modes |
 | Compliance verdicts | 11-control CIS-style generic Level 1 prototype bundle |
-| Demonstrated vendors | Cisco IOS-XE and Fortinet FortiOS fixtures |
+| Demonstrated vendors | Deterministic fixtures for Cisco, Fortinet, Juniper, Palo Alto and Arista |
 | Deterministic remediation | Cisco and partial Fortinet Jinja2 templates |
 | Safety gate | Only `SAFE` preflight proposals can be approved |
 | Reporting | Browser preview, PDF, JSON and CEF |
 | Optional context | Learning queue, anomaly signal and topology blast radius |
 
 This repository does not claim CIS certification or complete CIS, NIST, STIG or
-ISO 27001 coverage. Official policy content and additional validated vendor
-adapters are expansion work.
+ISO 27001 coverage. Official policy content, broader real-device validation and
+additional vendor adapters remain expansion work.
 
 ## Decision boundary
 

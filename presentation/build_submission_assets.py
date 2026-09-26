@@ -155,12 +155,12 @@ def build_pptx():
         textbox(slide, 11.8, y + 0.14, 0.42, 0.25, "✓", 15, GREEN, True, PP_ALIGN.CENTER)
     rect(slide, 0.7, 5.8, 11.9, 0.68, RGBColor(57, 43, 17))
     textbox(slide, 0.95, 5.99, 11.3, 0.28,
-            "TODAY: Cisco + Fortinet · single-file UI · one 11-control CIS-inspired bundle · not CIS certification",
+            "TODAY: 5-vendor synthetic parsing corpus · single-file UI · 11-control bundle · not certification",
             12, AMBER, True, PP_ALIGN.CENTER)
 
     slide = base_slide(prs, 5, "From prototype to controlled pilot", "Scale path and impact")
     phases = [
-        ("30 DAYS", "Bulk ingestion\nJuniper + Palo Alto"),
+        ("30 DAYS", "Bulk ingestion\nReal-device validation"),
         ("60 DAYS", "Authorized framework bundles\nLearning-queue UI"),
         ("90 DAYS", "Sanitized pilot\nPrecision + time metrics"),
     ]
@@ -215,7 +215,7 @@ Optional profiles: reviewed learning/RAG · topology blast radius · Batfish · 
     <h2>Five-stage pipeline</h2>
     <ol>
       <li><b>Ingest:</b> accept configuration text; validate, redact, hash and enqueue.</li>
-      <li><b>Normalize:</b> detect vendor/OS and map CLI to a strict Pydantic SecurityBaseline. Cisco IOS-XE and Fortinet FortiOS are demonstrated.</li>
+      <li><b>Normalize:</b> detect vendor/OS and map CLI to a strict Pydantic SecurityBaseline. Synthetic fixtures cover Cisco, Fortinet, Juniper, Palo Alto and Arista.</li>
       <li><b>Learn:</b> unknown blocks enter an administrator-reviewed mapping queue. Retrieved context never changes a verdict directly.</li>
       <li><b>Evaluate:</b> OPA applies an 11-control CIS-inspired prototype bundle and retains line-level evidence, severity and versions.</li>
       <li><b>Act and report:</b> reviewed Jinja2 CLI is preflighted; only SAFE proposals can be approved. Evidence exports as HTML/PDF/JSON/CEF.</li>
@@ -230,14 +230,14 @@ Optional profiles: reviewed learning/RAG · topology blast radius · Batfish · 
       <tr><td>AI adaptation</td><td>Local structured parsing and reviewed learning APIs</td><td>Wire admin learning queue into dashboard</td></tr>
       <tr><td>Multi-framework engine</td><td>Pluggable, versioned OPA architecture</td><td>Authorized CIS/NIST/STIG/ISO content</td></tr>
       <tr><td>Actionable reporting</td><td>Evidence, severity, remediation, PDF/JSON/CEF</td><td>Validate more hardware and firmware</td></tr>
-      <tr><td>Vendor-agnostic scale</td><td>Shared schema; Cisco and Fortinet fixtures</td><td>Juniper and Palo Alto validation</td></tr>
+      <tr><td>Vendor-agnostic scale</td><td>Shared schema; five-vendor synthetic corpus</td><td>Independent real-device validation</td></tr>
     </tbody></table>
     <h2>Deployment and trust</h2>
     <p>The default Compose profile is the deterministic presentation core. Optional <b>advanced</b> and <b>model</b> profiles add learning/topology/Batfish and local Ollama. The system does not push configuration to devices automatically: a human remains responsible for review and change control.</p>
     <h2>Verification evidence</h2>
     <div class='box'>Gateway 25 passed · Ingestion 20 passed · Compliance 98 passed (6 external integration skips) · Remediation 55 passed · Reporting 14 passed · Schema 8 passed · Scripts 6 passed · frontend type-check and production build passed.</div>
     <h2>Prototype claim boundary</h2>
-    <p>This prototype demonstrates two vendors, a single-file UI and one 11-control CIS-inspired policy bundle. It does <b>not</b> claim CIS certification or complete CIS, NIST, STIG or ISO coverage. The architecture is designed for those additions after content authorization and validation against representative sanitized configurations.</p>
+    <p>This prototype demonstrates a five-vendor synthetic fixture corpus, a single-file UI and one 11-control CIS-inspired policy bundle. It does <b>not</b> claim CIS certification, independent real-device validation, or complete CIS, NIST, STIG or ISO coverage. The architecture is designed for those additions after content authorization and validation against representative sanitized configurations.</p>
     <h2>Submission references</h2>
     <p><b>Repository:</b> https://github.com/arc-1103/NetAuditor<br><b>Contact:</b> Manav Mishra · manavmishra260205@gmail.com</p>
     <p class='small'>Generated from the tested submission branch. See README.md and docs/SUBMISSION_CHECKLIST.md for setup and evidence guidance.</p>

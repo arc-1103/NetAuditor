@@ -20,8 +20,9 @@ presentation (maximum five slides).
 
 Say **"CIS-inspired 11-control prototype policy"**, not "CIS certified." Say
 **"architecture supports additional frameworks/vendors"**, not "supports every
-vendor today." Demonstrate Cisco and Fortinet. Present Juniper, Palo Alto,
-bulk-upload UI and complete CIS/NIST/STIG/ISO content as next milestones.
+vendor today." Demonstrate the five-vendor synthetic corpus, but distinguish it
+from independent real-device validation. Present bulk upload and complete
+CIS/NIST/STIG/ISO content as next milestones.
 
 ## Two-minute video beat sheet
 

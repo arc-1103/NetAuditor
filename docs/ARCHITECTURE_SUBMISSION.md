@@ -32,8 +32,8 @@ Authentication uses role-based access (`admin`, `operator`, `auditor`).
 
 1. **Ingest:** accept `.cfg`, `.conf` or `.txt`; validate, redact and enqueue.
 2. **Normalize:** detect vendor/OS and map CLI chunks to a strict Pydantic
-   `SecurityBaseline`. Cisco IOS-XE and Fortinet FortiOS fixtures demonstrate
-   current adapters; local Ollama and deterministic mock modes share the same gate.
+   `SecurityBaseline`. Cisco, Fortinet, Juniper, Palo Alto and Arista fixtures
+   exercise deterministic adapters; local Ollama and mock modes share the same gate.
 3. **Learn:** unknown blocks enter a review queue. An administrator confirms a
    CLI pattern-to-field mapping, which becomes vendor/OS-filtered retrieval
    context for later parses. It never changes a verdict directly.
@@ -56,7 +56,7 @@ policy bundles over the stable normalized schema.
 | AI adaptation | Local structured parsing + reviewed learning APIs | Learning admin UI is not yet wired into dashboard |
 | Multi-framework engine | Pluggable OPA policy architecture | One CIS-inspired prototype bundle; no certification claim |
 | Actionable reporting | Evidence, risk, remediation, PDF/JSON/CEF | Validate more hardware/firmware combinations |
-| Vendor agnosticism | Shared schema; Cisco + Fortinet fixtures | Add Juniper/Palo Alto validated fixtures and policies |
+| Vendor agnosticism | Shared schema; five-vendor synthetic fixture corpus | Validate against representative real-device configurations |
 
 The default Compose profile is a deterministic presentation core. Optional
 `advanced` and `model` profiles add learning/topology/Batfish and local Ollama.
