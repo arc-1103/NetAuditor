@@ -1,7 +1,7 @@
 # NetAudit Engine — five-slide technical presentation
 
 Use one `##` section per slide. Footer:
-`SIH26155 · NTRO · Team <name> · github.com/arc-1103/NetAuditor`.
+`SIH26155 · NTRO · NetAudit Team · github.com/arc-1103/NetAuditor`.
 
 ## 1. The gap: mixed networks, fragmented assurance
 
@@ -80,4 +80,4 @@ controlled pilot environment.
 
 - Repository: `https://github.com/arc-1103/NetAuditor`
 - Demo video: `<insert final public link>`
-- Team: `<insert team name and contact>`
+- Team: `NetAudit Team · Manav Mishra · manavmishra260205@gmail.com`

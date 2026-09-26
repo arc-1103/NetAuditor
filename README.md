@@ -94,6 +94,10 @@ GitHub Actions workflow is provided at `docs/ci-workflow.template.yml`; copy it
 to `.github/workflows/ci.yml` using a GitHub credential with workflow scope.
 
 Submission-ready material is indexed in [`docs/SUBMISSION_CHECKLIST.md`](docs/SUBMISSION_CHECKLIST.md).
+Generated upload files are in [`submission/`](submission/): the validated
+five-slide PPTX and two-page architecture PDF. Rebuild both with
+`pip install -r presentation/requirements.txt` followed by
+`python3 presentation/build_submission_assets.py`.
 
 ## Security notes
 

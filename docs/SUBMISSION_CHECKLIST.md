@@ -8,10 +8,10 @@ presentation (maximum five slides).
 
 - [ ] Repository is public or accessible to evaluators and points to the tested commit.
 - [ ] Root README quick start is tested on the actual presentation laptop.
-- [ ] `docs/ARCHITECTURE_SUBMISSION.md` is exported to PDF and remains at most two pages.
-- [ ] `presentation/FINAL_PROTOTYPE_DECK.md` is rendered as exactly five slides.
+- [x] Architecture is exported as `submission/NetAudit_SIH26155_Architecture.pdf` (validated: two pages).
+- [x] Presentation is rendered as `submission/NetAudit_SIH26155_Technical_Presentation.pptx` (validated: five slides).
 - [ ] Demo video is at most two minutes and shows upload → evidence → safe remediation → report.
-- [ ] Repo URL and demo-video URL appear on the final slide and in the portal fields.
+- [ ] Repo URL is present; replace the pending demo-video field after uploading the final recording.
 - [ ] No `.env`, credentials, private device configurations or personal data are committed.
 - [ ] `./scripts/verify.sh` or the GitHub Actions workflow is green on the submitted commit.
 - [ ] Venue fallback (`cd frontend && npm run demo`) is tested without internet.
