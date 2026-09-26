@@ -17,11 +17,10 @@ engineering references or historical handovers.
 - `THREAT_MODEL.md`, `LOCAL_LLM_SETUP.md`, `RELEASE_CHECKLIST.md`
 - `ARCHITECTURE_ADVANCED_FEATURES.md` — detailed optional-feature design
 - `SIH26155_NetAudit_Architecture_Blueprint.md` — original long-form blueprint; not the submission document
-- Per-service READMEs and the root `BUILD_GUIDE.md`
+- Per-service READMEs for component-specific setup and behavior
 
 ## Historical records
 
-`HANDOVER_REPORT_2026-09-09.md`, `MEMORY.md`, `report.md`, and root
-`context.md` capture development decisions. They are useful to contributors,
-but should not be uploaded as SIH deliverables because some status language is
-point-in-time and may no longer describe the current tree.
+`HANDOVER_REPORT_2026-09-09.md`, `MEMORY.md`, and `report.md` capture historical
+development decisions. They are useful to contributors, but should not be
+uploaded as SIH deliverables because some status language is point-in-time.

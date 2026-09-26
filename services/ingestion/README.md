@@ -1,7 +1,5 @@
 # ingestion service
 
-Owner: see /TEAM_OWNERSHIP.md
-
 ## Run standalone
 ```
 cp .env.example .env

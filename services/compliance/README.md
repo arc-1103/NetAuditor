@@ -1,7 +1,5 @@
 # compliance service — Deterministic Compliance Engine
 
-Owner: Compliance / OPA lane (see `/TEAM_OWNERSHIP.md`)
-
 Blueprint §2.1 `System_Boundary(compliance)`. This is the deterministic half
 of the pipeline: the same normalized baseline always produces the same
 verdict, and every verdict carries the evidence that produced it. Nothing in
