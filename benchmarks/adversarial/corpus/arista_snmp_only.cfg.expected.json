@@ -1,0 +1,39 @@
+{
+  "detected_vendor": "arista",
+  "expected_baseline": {
+    "banners": {
+      "login_banner_present": true
+    },
+    "device": {
+      "raw_hostname": "spine-eos-03"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.60.10.30"
+      ]
+    },
+    "ntp": {
+      "authentication_enabled": true,
+      "enabled": true,
+      "servers": [
+        "10.60.10.20"
+      ]
+    },
+    "services": {
+      "http_server_enabled": "DISABLED",
+      "https_server_enabled": "ENABLED"
+    },
+    "snmp": {
+      "community_strings": [
+        "public"
+      ],
+      "enabled": true,
+      "version": "v2c"
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    }
+  },
+  "vendor": "arista"
+}

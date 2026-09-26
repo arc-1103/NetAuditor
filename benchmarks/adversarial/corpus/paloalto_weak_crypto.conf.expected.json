@@ -1,0 +1,46 @@
+{
+  "detected_vendor": "paloalto",
+  "expected_baseline": {
+    "banners": {
+      "login_banner_present": true
+    },
+    "crypto": {
+      "ike_policies": [
+        {
+          "authentication_method": null,
+          "dh_group": null,
+          "encryption": "DES",
+          "hash_algorithm": "MD5",
+          "policy_id": null
+        }
+      ]
+    },
+    "device": {
+      "raw_hostname": "pan-fw-edge-03"
+    },
+    "logging": {
+      "syslog_enabled": true,
+      "syslog_hosts": [
+        "10.50.10.30"
+      ]
+    },
+    "ntp": {
+      "authentication_enabled": true,
+      "enabled": true,
+      "servers": [
+        "10.50.10.20"
+      ]
+    },
+    "services": {
+      "http_server_enabled": "DISABLED"
+    },
+    "snmp": {
+      "enabled": true,
+      "version": "v3"
+    },
+    "telnet": {
+      "enabled": "DISABLED"
+    }
+  },
+  "vendor": "paloalto"
+}

@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {"name": "unsafe_removes_admin_account", "script": "no username admin privilege 15\nend", "expect_flagged": true},
+    {"name": "unsafe_disables_all_vty_access", "script": "configure terminal\nline vty 0 4\n transport input none\nend", "expect_flagged": true},
+    {"name": "unsafe_shuts_down_uplink_interface", "script": "interface GigabitEthernet0/1\n shutdown\nend", "expect_flagged": true},
+    {"name": "unsafe_disables_ip_routing", "script": "no ip routing\nend", "expect_flagged": true},
+    {"name": "unsafe_unresolved_secret_placeholder", "script": "snmp-server user netaudit-ro netaudit-group v3 auth sha <REPLACE_AUTH_SECRET>\nend", "expect_flagged": true},
+    {"name": "unsafe_unreviewed_environment_specific_value", "script": "! REVIEW: confirm mgmt0 is the correct interface before deployment\nconfig system interface\n edit \"mgmt0\"\n    set allowaccess https ssh ping\nnext\nend", "expect_flagged": true},
+    {"name": "safe_disable_telnet_keep_ssh", "script": "configure terminal\nline vty 0 15\n transport input ssh\nend\nwrite memory", "expect_flagged": false},
+    {"name": "safe_enforce_ssh_v2", "script": "configure terminal\nip ssh version 2\nend\nwrite memory", "expect_flagged": false},
+    {"name": "safe_snmp_v3_migration", "script": "configure terminal\nno snmp-server community public\nsnmp-server group netaudit-group v3 priv\nend\nwrite memory", "expect_flagged": false},
+    {"name": "safe_ntp_auth_enable", "script": "configure terminal\nntp authentication-key 1 md5 7 0102030405\nntp authenticate\nend\nwrite memory", "expect_flagged": false},
+    {"name": "safe_login_banner", "script": "configure terminal\nbanner login ^C Authorized access only. All activity is logged and monitored. ^C\nend\nwrite memory", "expect_flagged": false},
+    {"name": "safe_fortinet_disable_http_resolved", "script": "config system global\n set admin-https-redirect enable\n set admin-sport 8443\nend", "expect_flagged": false}
+  ]
+}
