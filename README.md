@@ -38,8 +38,10 @@ cannot pass the normal approval gate.
 
 ## Fast presentation setup
 
-Requirements: Docker Engine with Compose v2, at least 12 GB RAM for the complete
-local-model stack, and internet access during the first image/model pull.
+Requirements: Docker Engine with Compose v2, Git, and internet access during the
+first image pull. The presentation core does not start a local model and is the
+recommended path on an 8 GB machine. Allow at least 12 GB RAM only when enabling
+the optional local-model profile.
 
 ```bash
 ./scripts/setup_demo.sh
@@ -51,6 +53,9 @@ python scripts/seed_admin.py
 Open `http://localhost:3000`, then upload `demo/cisco_insecure.cfg`.
 See `demo/DEMO_SCRIPT.md` for the four-minute narration and
 `docs/PRESENTATION_CLAIMS_CHECKLIST.md` for defensible wording.
+
+Default credentials are `admin@netaudit.local` / `changeme`; use them only for
+the local prototype. `setup_demo.sh` generates a unique JWT signing secret.
 
 Set `NEXT_PUBLIC_USE_MOCK_API=true` before building the frontend for the
 deterministic venue fallback. The dashboard labels fallback mode clearly.
@@ -81,9 +86,18 @@ learning and local-model services can be included with
 
 ## Verification
 
-GitHub Actions tests every lane independently, builds the locked frontend and
-runs static/demo gates. Before a live demo, also run `docker compose config` and
-the end-to-end smoke test on the presentation machine.
+Run `./scripts/verify.sh` after installing the Python development requirements.
+It tests every service in an isolated process (the services intentionally share
+the Python package name `app`), validates fixtures/contracts, type-checks the
+dashboard and validates Compose when Docker is available. A ready-to-install
+GitHub Actions workflow is provided at `docs/ci-workflow.template.yml`; copy it
+to `.github/workflows/ci.yml` using a GitHub credential with workflow scope.
+
+Submission-ready material is indexed in [`docs/SUBMISSION_CHECKLIST.md`](docs/SUBMISSION_CHECKLIST.md).
+Generated upload files are in [`submission/`](submission/): the validated
+five-slide PPTX and two-page architecture PDF. Rebuild both with
+`pip install -r presentation/requirements.txt` followed by
+`python3 presentation/build_submission_assets.py`.
 
 ## Security notes
 
