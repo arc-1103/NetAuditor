@@ -43,8 +43,8 @@
    vice versa.
 
 Both services connect to the same physical Postgres instance but own
-disjoint tables. Never let one service's migration touch the other's
-table without a heads-up — see `TEAM_OWNERSHIP.md`.
+disjoint tables. A migration must not modify another service's tables without
+an explicit cross-service review.
 
 ## Request flow, step by step
 

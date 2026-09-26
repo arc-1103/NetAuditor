@@ -1,7 +1,5 @@
 # frontend (dashboard)
 
-Owner: see /TEAM_OWNERSHIP.md
-
 ## Run standalone against mock data (default — don't wait on backend)
 ```
 cp .env.local.example .env.local

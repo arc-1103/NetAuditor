@@ -1,7 +1,5 @@
 # Parsing / SLM service
 
-Owner: Parsing / SLM lane (`TEAM_OWNERSHIP.md`)
-
 ## Responsibilities
 
 - Detect vendor/OS once at ingestion-job level.
