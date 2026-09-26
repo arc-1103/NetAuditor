@@ -47,7 +47,17 @@ def build_json_report(report_data: dict) -> dict:
 
 
 def _cef_escape(value: object) -> str:
+    """Escaping for a CEF *extension* field (key=value pairs) — `\\`, `=`,
+    and newline. Not valid for a header field; see _cef_header_escape."""
     return str(value or "").replace("\\", "\\\\").replace("=", "\\=").replace("\n", "\\n")
+
+
+def _cef_header_escape(value: object) -> str:
+    """Escaping for a CEF *header* field (pipe-delimited). The spec requires
+    `\\` and `|` escaped here — `|` is the header field delimiter itself, so
+    an unescaped one in a title/control_id would shift every field after it
+    out of position for any SIEM parsing the exported .cef file."""
+    return str(value or "").replace("\\", "\\\\").replace("|", "\\|").replace("\n", "\\n")
 
 
 def render_cef(report_data: dict) -> str:
@@ -55,8 +65,8 @@ def render_cef(report_data: dict) -> str:
     severity = {"CRITICAL": 10, "HIGH": 8, "MEDIUM": 5, "LOW": 3}
     lines = []
     for finding in report_data.get("findings", []):
-        control = _cef_escape(finding.get("control_id"))
-        title = _cef_escape(finding.get("title"))
+        control = _cef_header_escape(finding.get("control_id"))
+        title = _cef_header_escape(finding.get("title"))
         extension = " ".join([
             f"externalId={_cef_escape(report_data.get('id'))}",
             f"fileHash={_cef_escape(report_data.get('file_hash'))}",

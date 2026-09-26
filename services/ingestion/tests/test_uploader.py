@@ -151,6 +151,13 @@ def test_mask_secret_keeps_only_last_four_characters():
     assert uploader._mask_secret("hunter2verysecret") == "*" * 13 + "cret"
 
 
+def test_mask_secret_fully_masks_a_secret_of_exactly_four_characters():
+    # len(value) - 4 == 0 must mask all four, not reveal the whole value —
+    # the off-by-one this guards was `len(value) < 4`, which let "abcd"
+    # through as `"*"*(4-4) + "abcd"[-4:]` == "abcd", fully unmasked.
+    assert uploader._mask_secret("ab1a") == "****"
+
+
 async def test_rewrites_already_stored_object_instead_of_rejecting(monkeypatch):
     # Dedup is now Postgres's job (see app.db.get_audit_run_id_by_hash),
     # checked by the caller before create_audit_run. validate_and_store
@@ -204,3 +211,24 @@ def test_redact_credentials_redacts_custom_snmp_community_everywhere():
 
     assert "s3cr3t-str1ng" not in redacted
     assert redacted.count("[REDACTED]") == 2
+
+
+def test_capture_credential_evidence_records_a_custom_snmp_community():
+    # redact_credentials scrubs a custom community from the stored text —
+    # capture_credential_evidence must record it too, or a real secret gets
+    # redacted with no corresponding evidence entry for a reviewer to see.
+    text = "snmp-server community s3cr3t-str1ng RO\n"
+
+    evidence = uploader.capture_credential_evidence(text)
+
+    assert len(evidence) == 1
+    assert evidence[0]["pattern_type"] == "snmp_community"
+    assert evidence[0]["line_number"] == 1
+    assert evidence[0]["masked_value"] == uploader._mask_secret("s3cr3t-str1ng")
+    assert evidence[0]["sha256"] == hashlib.sha256(b"s3cr3t-str1ng").hexdigest()
+
+
+def test_capture_credential_evidence_ignores_default_snmp_communities():
+    text = "snmp-server community public RO\n"
+
+    assert uploader.capture_credential_evidence(text) == []

@@ -306,4 +306,6 @@ def test_arista_insecure_scalars():
     assert baseline["snmp"]["version"] == "v2c"
     assert baseline["banners"]["login_banner_present"] is False
     assert baseline["logging"]["syslog_enabled"] is False
-    assert baseline["ntp"]["authentication_enabled"] is False
+    # No "ntp authenticate" line seen — evidence-only, must abstain rather
+    # than assert a confirmed False (see module docstring).
+    assert "authentication_enabled" not in baseline["ntp"]

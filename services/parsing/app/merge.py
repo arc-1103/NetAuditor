@@ -71,7 +71,14 @@ def merge_baselines(
 # same reasoning applied to fidelity scoring. The conflict is still
 # recorded and still costs the usual confidence penalty; only which value
 # survives changes.
-_NEGATIVE_SCALARS = {False, "DISABLED"}
+#
+# Checked with `is False`/`==` on the exact two sentinel values, never with
+# Python's `in` on a set containing `False` — `0 in {False, "DISABLED"}` is
+# True (Python's `0 == False`), which would silently treat a real, meaningful
+# integer 0 (e.g. LoggingConfig.syslog_severity_level, where 0 = "emergency")
+# as the disabled placeholder and let a conflicting chunk overwrite it.
+def _is_negative_scalar(value: Any) -> bool:
+    return value is False or value == "DISABLED"
 
 
 def _merge_dict(
@@ -100,7 +107,7 @@ def _merge_dict(
                 if item not in target[key]:
                     target[key].append(deepcopy(item))
         elif target[key] != value:
-            if target[key] in _NEGATIVE_SCALARS and value not in _NEGATIVE_SCALARS:
+            if _is_negative_scalar(target[key]) and not _is_negative_scalar(value):
                 target[key] = deepcopy(value)
             conflicts.append(current_path)
 

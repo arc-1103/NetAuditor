@@ -143,6 +143,24 @@ async def test_dual_approval_rejects_the_same_actor_approving_twice(sqlite_sessi
     assert row["approval_status"] == "PENDING"
 
 
+async def test_regenerating_the_script_invalidates_a_prior_approval_for_the_quorum(sqlite_session):
+    """A stale APPROVED ledger event from a script version that's since been
+    regenerated must never count toward the new version's DUAL_APPROVAL
+    quorum — admin-1 approved v1, but never saw v2's actual commands."""
+    await db.save_proposal(_proposal(decision_action="DUAL_APPROVAL", risk_tier="HIGH", blast_radius_count=1))
+    first = await db.approve("CIS-NET-1.1.2", RUN_ID, True, "admin-1", None, "admin")
+    assert first["dual_approval"] == {"required": 2, "received": 1}
+
+    # Regenerate — a materially different script, same control/run.
+    await db.save_proposal(_proposal(decision_action="DUAL_APPROVAL", risk_tier="HIGH", blast_radius_count=1))
+    row = await db.get_proposal(RUN_ID, "CIS-NET-1.1.2")
+    assert row["approval_status"] == "PENDING"
+
+    second = await db.approve("CIS-NET-1.1.2", RUN_ID, True, "admin-2", None, "admin")
+    assert second["approval_status"] == "PENDING"
+    assert second["dual_approval"] == {"required": 2, "received": 1}
+
+
 async def test_reject_is_not_role_restricted(sqlite_session):
     await db.save_proposal(_proposal(decision_action="DUAL_APPROVAL", risk_tier="HIGH", blast_radius_count=1))
 

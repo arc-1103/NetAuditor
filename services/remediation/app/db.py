@@ -15,6 +15,17 @@ engine = create_async_engine(POSTGRES_DSN, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+def _row_lock_clause(session: AsyncSession) -> str:
+    """SQLite (the test suite's engine, via aiosqlite, bound in by
+    monkeypatching `async_session` rather than module-level `engine`) has no
+    SELECT ... FOR UPDATE syntax — it already serializes writes at the
+    connection/database level, so the row lock approve() takes below is a
+    no-op there anyway, not a real gap in test coverage. Checked against the
+    session's own bind, not the module-level `engine`, so a monkeypatched
+    test session is detected correctly. Only Postgres needs the clause."""
+    return "" if session.bind.dialect.name == "sqlite" else "FOR UPDATE"
+
+
 async def save_proposal(proposal: dict) -> None:
     preflight = proposal["preflight"]
     decision = proposal.get("decision") or {}
@@ -84,11 +95,18 @@ async def approve(control_id: str, audit_run_id: str, approved: bool, user_id: s
     if not approved:
         return await _finalize_approval(audit_run_id, control_id, "REJECTED", user_id, comment, now)
 
-    async with async_session() as session:
+    # SELECT ... FOR UPDATE + the prior_actors read + the new APPROVED
+    # insert all share one transaction, so two concurrent approve() calls
+    # for the same proposal serialize on this row lock instead of both
+    # reading prior_actors before either's event commits (which would let
+    # two genuine approvals each compute "1 of 2" and neither finalize).
+    async with async_session() as session, session.begin():
         proposal = (await session.execute(
-            text("""
-                SELECT decision_action, decision_ruleset_version, risk_tier, blast_radius_count, preflight_status
+            text(f"""
+                SELECT decision_action, decision_ruleset_version, risk_tier, blast_radius_count,
+                       preflight_status, updated_at
                 FROM remediation_proposals WHERE audit_run_id=:run_id AND control_id=:control_id
+                {_row_lock_clause(session)}
             """),
             {"run_id": audit_run_id, "control_id": control_id},
         )).mappings().first()
@@ -101,15 +119,22 @@ async def approve(control_id: str, audit_run_id: str, approved: bool, user_id: s
             actor_type=actor_type,
         )
 
+        # Scoped to this script version (>= the last save_proposal that
+        # touched this row) so an APPROVED event from a since-regenerated,
+        # never-reviewed-by-that-approver script version can never count
+        # toward this version's quorum — save_proposal bumps updated_at on
+        # every regeneration, and ledger_events is append-only (no row here
+        # is ever deleted), so this is the only way to tell "stale" apart
+        # from "current" without a schema change.
         prior_actors = set((await session.execute(
             text("""
                 SELECT DISTINCT actor FROM ledger_events
                 WHERE audit_run_id=:run_id AND control_id=:control_id AND event_type='APPROVED'
+                  AND created_at >= :script_updated_at
             """),
-            {"run_id": audit_run_id, "control_id": control_id},
+            {"run_id": audit_run_id, "control_id": control_id, "script_updated_at": proposal["updated_at"]},
         )).scalars().all())
 
-    async with async_session() as session, session.begin():
         await _record_event(
             session, audit_run_id, control_id, "APPROVED", actor=user_id,
             ruleset_version=proposal["decision_ruleset_version"], payload={"comment": comment},
@@ -292,14 +317,24 @@ async def get_run_parser_agreement(audit_run_id: str) -> float | None:
 
 
 async def _record_event(session, audit_run_id: str, control_id: str | None, event_type: str, *, actor: str, ruleset_version: str | None, payload: dict) -> None:
+    # created_at is set here in Python, not left to each dialect's own
+    # DEFAULT now() — approve()'s dual-approval quorum compares this against
+    # remediation_proposals.updated_at (also a Python-set datetime, see
+    # save_proposal/_finalize_approval), and a DB-generated default's string
+    # format/precision can differ from that comparison value across dialects
+    # (proven by the SQLite test suite: `datetime('now')` has no fractional
+    # seconds, so a same-second comparison against a microsecond-precision
+    # updated_at can come out backwards). One Python-controlled timestamp
+    # source for both sides keeps the comparison exact everywhere.
     await session.execute(
         text("""
-            INSERT INTO ledger_events (audit_run_id, control_id, event_type, actor, ruleset_version, payload)
-            VALUES (:audit_run_id, :control_id, :event_type, :actor, :ruleset_version, :payload)
+            INSERT INTO ledger_events (audit_run_id, control_id, event_type, actor, ruleset_version, payload, created_at)
+            VALUES (:audit_run_id, :control_id, :event_type, :actor, :ruleset_version, :payload, :created_at)
         """),
         {
             "audit_run_id": audit_run_id, "control_id": control_id, "event_type": event_type,
             "actor": actor or "system", "ruleset_version": ruleset_version, "payload": json.dumps(payload),
+            "created_at": datetime.now(timezone.utc),
         },
     )
 

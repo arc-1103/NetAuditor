@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
@@ -16,6 +17,18 @@ app = FastAPI(title="netaudit-reporting", version="1.0.0")
 
 class GenerateRequest(BaseModel):
     audit_run_id: str
+
+
+def _normalize_audit_run_id(audit_run_id: str) -> str:
+    """Canonical (lowercase) form, matching pdf_service.generate_pdf's own
+    `str(UUID(...))` normalization exactly — every URL/filename this service
+    builds from an audit_run_id must use the same canonical string, or a
+    valid but differently-cased UUID 404s a report that was actually
+    generated (the filename on disk uses the canonical form)."""
+    try:
+        return str(UUID(audit_run_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid audit run id") from None
 
 
 def _require_evaluated(data: dict) -> None:
@@ -38,23 +51,25 @@ async def health():
 
 @app.post("/reports/generate")
 async def generate(body: GenerateRequest, x_user_id: str | None = Header(default=None)):
-    data = await db.get_report_data(body.audit_run_id)
+    audit_run_id = _normalize_audit_run_id(body.audit_run_id)
+    data = await db.get_report_data(audit_run_id)
     if data is None:
-        raise HTTPException(status_code=404, detail=f"No audit run {body.audit_run_id}")
+        raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")
     _require_evaluated(data)
-    path = generate_pdf(body.audit_run_id, data)
-    await db.record_report(body.audit_run_id, str(path), x_user_id or "unknown")
+    path = generate_pdf(audit_run_id, data)
+    await db.record_report(audit_run_id, str(path), x_user_id or "unknown")
     return {
-        "audit_run_id": body.audit_run_id,
+        "audit_run_id": audit_run_id,
         "status": "COMPLETE",
-        "download_url": f"/api/reports/{body.audit_run_id}/download",
-        "preview_url": f"/api/reports/{body.audit_run_id}/preview",
+        "download_url": f"/api/reports/{audit_run_id}/download",
+        "preview_url": f"/api/reports/{audit_run_id}/preview",
     }
 
 
 @app.get("/reports/{audit_run_id}/download")
 async def download(audit_run_id: str):
     from app.pdf_service import OUTPUT_DIR
+    audit_run_id = _normalize_audit_run_id(audit_run_id)
     try:
         path = OUTPUT_DIR / f"netaudit-{audit_run_id}.pdf"
         resolved = path.resolve(strict=True)
@@ -67,6 +82,7 @@ async def download(audit_run_id: str):
 
 @app.get("/reports/{audit_run_id}/preview", response_class=HTMLResponse)
 async def preview(audit_run_id: str):
+    audit_run_id = _normalize_audit_run_id(audit_run_id)
     data = await db.get_report_data(audit_run_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")
@@ -76,6 +92,7 @@ async def preview(audit_run_id: str):
 
 @app.get("/reports/{audit_run_id}/json")
 async def json_export(audit_run_id: str):
+    audit_run_id = _normalize_audit_run_id(audit_run_id)
     data = await db.get_report_data(audit_run_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")
@@ -121,6 +138,7 @@ async def provenance(audit_run_id: str, control_id: str):
 
 @app.get("/reports/{audit_run_id}/cef", response_class=PlainTextResponse)
 async def cef_export(audit_run_id: str):
+    audit_run_id = _normalize_audit_run_id(audit_run_id)
     data = await db.get_report_data(audit_run_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {audit_run_id}")

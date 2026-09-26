@@ -95,11 +95,49 @@ def test_fortinet_trusthost_is_narrowing():
     assert any("trusted host" in f for f in est.newly_blocked)
 
 
+def test_fortinet_unset_trusthost_is_widening():
+    """The narrowing counterpart's inverse — an LLM-synthesized remediation
+    isn't limited to the committed .j2 templates (see module docstring), so
+    this must be caught even though no shipped template emits `unset`."""
+    est = estimate_reachability_impact('config system admin\n edit "admin"\n  unset trusthost1\n next\nend')
+
+    assert any("trusted-host restriction removed" in f for f in est.newly_permitted)
+    assert est.newly_blocked == []
+
+
 def test_fortinet_allowaccess_has_no_claimed_direction():
     est = estimate_reachability_impact("config system interface\n edit \"mgmt\"\n  set allowaccess https ssh ping\n next\nend")
 
     assert est.newly_blocked == []
     assert est.newly_permitted == []
+
+
+def test_fortinet_unset_allowaccess_has_no_claimed_direction():
+    est = estimate_reachability_impact('config system interface\n edit "mgmt"\n  unset allowaccess\n next\nend')
+
+    assert est.newly_blocked == []
+    assert est.newly_permitted == []
+
+
+def test_applying_ip_access_group_to_a_physical_interface_is_narrowing():
+    """The most common way an ACL narrows/widens interface reachability —
+    not just the vty-only access-class case."""
+    script = "interface GigabitEthernet0/1\n ip access-group MGMT-ONLY in\nend"
+
+    est = estimate_reachability_impact(script)
+
+    assert any("access-group MGMT-ONLY applied" in f for f in est.newly_blocked)
+    assert "GigabitEthernet0/1" in est.blast_radius
+    assert "MGMT-ONLY" in est.blast_radius
+
+
+def test_removing_ip_access_group_from_a_physical_interface_is_widening():
+    script = "interface GigabitEthernet0/1\n no ip access-group MGMT-ONLY in\nend"
+
+    est = estimate_reachability_impact(script)
+
+    assert any("access-group MGMT-ONLY removed" in f for f in est.newly_permitted)
+    assert est.newly_blocked == []
 
 
 def test_route_statements_are_touched_but_not_classified():

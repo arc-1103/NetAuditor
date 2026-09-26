@@ -78,9 +78,18 @@ async def evaluate(baseline: dict, framework: str | None = None) -> list[dict]:
     if resp.status_code >= 400:
         raise OPAEvaluationError(f"OPA returned {resp.status_code} for {url}: {resp.text}")
 
+    try:
+        body = resp.json()
+    except ValueError as e:
+        # A 2xx response with a non-JSON/truncated body (e.g. OPA mid-restart
+        # behind a proxy returning an empty or HTML 200) must raise this
+        # module's own error, not a bare json.JSONDecodeError a caller's
+        # narrower except clause wouldn't expect — same "never silently
+        # report a broken device as compliant" contract as the branches below.
+        raise OPAEvaluationError(f"OPA returned a non-JSON response from {url}: {e}") from e
+
     # An undefined path is `{}` with no "result" key — that means the bundle
     # for this framework isn't loaded, not that the device is clean.
-    body = resp.json()
     if "result" not in body:
         raise OPAEvaluationError(
             f"No policy bundle loaded at {url}. Check POLICY_BUNDLE_PATH and that "

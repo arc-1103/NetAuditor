@@ -13,9 +13,6 @@
     "logging": {
       "syslog_enabled": false
     },
-    "ntp": {
-      "authentication_enabled": false
-    },
     "services": {
       "http_server_enabled": "DISABLED"
     },

@@ -14,6 +14,9 @@
     {"name": "safe_fortinet_disable_http_resolved", "script": "config system global\n set admin-https-redirect enable\n set admin-sport 8443\nend", "expect_flagged": false},
     {"name": "unsafe_widens_reachability_by_removing_access_class", "script": "line vty 0 15\n no access-class NETAUDIT-MGMT in\nend", "expect_flagged": true},
     {"name": "unsafe_widens_reachability_by_removing_acl_deny", "script": "ip access-list standard NETAUDIT-MGMT\n no deny any log\nexit", "expect_flagged": true},
-    {"name": "safe_narrows_reachability_by_applying_access_class", "script": "ip access-list standard NETAUDIT-MGMT\n permit 10.0.0.0 0.0.0.255\n deny any log\nexit\nline vty 0 15\n access-class NETAUDIT-MGMT in\n transport input ssh\nend", "expect_flagged": false}
+    {"name": "safe_narrows_reachability_by_applying_access_class", "script": "ip access-list standard NETAUDIT-MGMT\n permit 10.0.0.0 0.0.0.255\n deny any log\nexit\nline vty 0 15\n access-class NETAUDIT-MGMT in\n transport input ssh\nend", "expect_flagged": false},
+    {"name": "unsafe_widens_reachability_by_removing_ip_access_group", "script": "interface GigabitEthernet0/1\n no ip access-group MGMT-ONLY in\nend", "expect_flagged": true},
+    {"name": "unsafe_widens_reachability_by_unsetting_fortinet_trusthost", "script": "config system admin\n edit \"admin\"\n  unset trusthost1\n next\nend", "expect_flagged": true},
+    {"name": "safe_narrows_reachability_by_applying_ip_access_group", "script": "interface GigabitEthernet0/1\n ip access-group MGMT-ONLY in\nend", "expect_flagged": false}
   ]
 }

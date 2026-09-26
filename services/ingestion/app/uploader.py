@@ -40,17 +40,24 @@ CREDENTIAL_PATTERNS = [
 _DEFAULT_SNMP_COMMUNITIES = {"public", "private"}
 
 
+def _find_custom_snmp_communities(text: str) -> dict[str, int]:
+    """Non-default SNMP community strings, mapped to the 1-based line number
+    of their first `snmp-server community` occurrence. Shared by
+    redact_credentials (which then scrubs the value everywhere it appears —
+    it's also reused as the implicit auth token on
+    `snmp-server host ... <community>` lines) and capture_credential_evidence
+    (which needs the same set recorded as evidence, not just redacted)."""
+    found: dict[str, int] = {}
+    for m in re.finditer(r"(?im)^\s*snmp-server\s+community\s+(\S+)", text):
+        community = m.group(1)
+        if community.lower() not in _DEFAULT_SNMP_COMMUNITIES and community not in found:
+            found[community] = text.count("\n", 0, m.start()) + 1
+    return found
+
+
 def redact_credentials(text: str) -> str:
     redacted = text
-    # Any non-default community is a real secret and is also reused as the
-    # implicit auth token on `snmp-server host ... <community>` lines, so
-    # redact it everywhere it appears, not just on the `community` line.
-    custom_communities = {
-        m.group(1)
-        for m in re.finditer(r"(?im)^\s*snmp-server\s+community\s+(\S+)", redacted)
-        if m.group(1).lower() not in _DEFAULT_SNMP_COMMUNITIES
-    }
-    for community in custom_communities:
+    for community in _find_custom_snmp_communities(redacted):
         redacted = re.sub(rf"(?<!\S){re.escape(community)}(?!\S)", "[REDACTED]", redacted)
     for _label, pattern in CREDENTIAL_PATTERNS:
         redacted = pattern.sub(lambda m: m.group(1) + "[REDACTED]", redacted)
@@ -60,9 +67,10 @@ def redact_credentials(text: str) -> str:
 def _mask_secret(value: str) -> str:
     """Last 4 characters only — enough for a human to confirm which secret
     a finding refers to (e.g. across two findings, or against a known-weak
-    password list by hash) without ever reconstructing it. A secret under 4
-    characters is masked completely rather than partially revealed in full."""
-    if len(value) < 4:
+    password list by hash) without ever reconstructing it. A secret of 4
+    characters or fewer is masked completely rather than partially (or, for
+    exactly 4 chars, entirely) revealed in full."""
+    if len(value) <= 4:
         return "*" * len(value) if value else ""
     return "*" * (len(value) - 4) + value[-4:]
 
@@ -85,6 +93,15 @@ def capture_credential_evidence(text: str) -> list[dict]:
                     "sha256": hashlib.sha256(value.encode()).hexdigest(),
                 }
             )
+    for community, line_number in _find_custom_snmp_communities(text).items():
+        evidence.append(
+            {
+                "pattern_type": "snmp_community",
+                "line_number": line_number,
+                "masked_value": _mask_secret(community),
+                "sha256": hashlib.sha256(community.encode()).hexdigest(),
+            }
+        )
     return evidence
 
 

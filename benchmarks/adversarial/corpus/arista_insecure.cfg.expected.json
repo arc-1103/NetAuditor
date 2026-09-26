@@ -12,7 +12,6 @@
       "syslog_enabled": false
     },
     "ntp": {
-      "authentication_enabled": false,
       "enabled": true,
       "servers": [
         "10.60.10.20"

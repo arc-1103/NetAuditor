@@ -145,8 +145,23 @@ function ReportsView({ audit, token }: { audit: AuditRun | null; token: string }
     if (!audit) return;
     setBusy(kind); setError("");
     try {
-      if (kind === "download") await generateReport(audit.id, token);
-      if (!USE_MOCK) await openProtectedReport(audit.id, token, kind);
+      if (kind === "download") {
+        await generateReport(audit.id, token);
+      } else if (USE_MOCK) {
+        // generateReport's own mock branch already does this for
+        // "download" — json/cef need the same client-side fallback rather
+        // than silently doing nothing when there's no live backend to ask.
+        if (kind === "json") {
+          const report = { product: "NetAudit", mode: "deterministic presentation fallback", audit_run: audit.id, summary: audit.summary, findings: audit.findings };
+          const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+          window.open(url, "_blank", "noopener,noreferrer");
+          window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        } else {
+          throw new Error("CEF export needs a live backend — not available in demo mode");
+        }
+      } else {
+        await openProtectedReport(audit.id, token, kind);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The report could not be opened");
     } finally {

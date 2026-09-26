@@ -68,7 +68,7 @@ async def test_generate_renders_preflights_and_persists(monkeypatch):
     assert response.status_code == 200
     assert response.json()["preflight"]["status"] == "SAFE"
     assert "ip ssh version 2" in response.json()["script"]
-    assert response.json()["decision"]["ruleset_version"] == "1.0.0"
+    assert response.json()["decision"]["ruleset_version"] == "1.1.0"
     save.assert_awaited_once()
 
 

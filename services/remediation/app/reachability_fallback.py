@@ -10,15 +10,21 @@ real Batfish first: "zero external dependency risk... kept permanently as
 a fast first-pass filter, with Batfish invoked only for changes it flags
 as non-trivial."
 
+preflight() is also the safety net for agentic-RAG-synthesized scripts
+(app/main.py's `_build_proposal`), which are arbitrary LLM output, not
+limited to the committed .j2 templates — so its pattern coverage can't be
+scoped to only what those templates happen to emit today.
+
 This reads only the script text passed to app/batfish_client.py's
 preflight() — not the device's current live configuration, since no
 baseline-threading exists yet between Compliance and this service for
 that. A change is classified narrowing/widening only when the classification
 holds regardless of what the rest of the device's config looks like
 (monotonic once the change itself is known):
-  - Applying an access-class/trusthost restriction to a line that had none
-    visible in this script can only narrow what reaches it — "no filter"
-    is always a superset of "any filter" — and removing one can only widen.
+  - Applying an access-class/access-group/trusthost restriction to a line
+    that had none visible in this script can only narrow what reaches it —
+    "no filter" is always a superset of "any filter" — and removing one can
+    only widen.
   - Removing a `permit`/`deny` entry from an existing ACL can only narrow
     (permit removed) or widen (deny removed) — the entry demonstrably
     existed and mattered before this script ran.
@@ -39,10 +45,11 @@ holds regardless of what the rest of the device's config looks like
 ACL/route lines at all, is deliberate — never a guessed default, the same
 discipline services/parsing/app/deterministic_extractor.py's own module
 docstring documents for exactly this kind of best-effort parser. Vendor
-coverage matches what services/remediation/templates/*.j2 actually ships
-today: Cisco/Arista-style IOS ACL syntax and the FortiOS admin-access
-directives those templates use (`set allowaccess`, `set trusthostN`) — not
-`config firewall policy`, which no shipped template touches.
+coverage is Cisco/Arista-style IOS ACL syntax (`ip access-group` on a
+physical interface, `access-class` on a vty line, named/numbered ACL
+entries) and the FortiOS admin-access directives (`set`/`unset allowaccess`,
+`set`/`unset trusthostN`) — not `config firewall policy`, which no shipped
+template touches (see services/remediation/templates/*.j2).
 
 Deliberately narrower than Batfish, by design: no multi-hop topology, no
 BGP/OSPF impact modeling — a routing statement is recorded for blast-radius
@@ -79,12 +86,15 @@ _INTERFACE_LINE = re.compile(r"^\s*interface\s+(\S+)\s*$", re.IGNORECASE)
 _VTY_LINE = re.compile(r"^\s*line\s+vty\s+(\S.*)$", re.IGNORECASE)
 _TRANSPORT_INPUT = re.compile(r"^\s*transport\s+input\s+(\S.*)$", re.IGNORECASE)
 _ACCESS_CLASS = re.compile(r"^\s*(no\s+)?access-class\s+(\S+)\s+in\b", re.IGNORECASE)
+_ACCESS_GROUP = re.compile(r"^\s*(no\s+)?ip\s+access-group\s+(\S+)\s+(?:in|out)\b", re.IGNORECASE)
 _NAMED_ACL_START = re.compile(r"^\s*ip\s+access-list\s+(?:standard|extended)\s+(\S+)", re.IGNORECASE)
 _ACL_ENTRY = re.compile(r"^\s*(no\s+)?(permit|deny)\b(.*)$", re.IGNORECASE)
 _NUMBERED_ACL = re.compile(r"^\s*(no\s+)?access-list\s+(\d+)\s+(permit|deny)\b(.*)$", re.IGNORECASE)
 _ROUTE_STATEMENT = re.compile(r"^\s*(no\s+)?(ip\s+route\b|router\s+(?:bgp|ospf)\b|neighbor\s+\S+)", re.IGNORECASE)
-_FORTINET_ALLOWACCESS = re.compile(r"^\s*set\s+allowaccess\s+(\S.*)$", re.IGNORECASE)
-_FORTINET_TRUSTHOST = re.compile(r"^\s*set\s+trusthost\d+\s+(\S.*)$", re.IGNORECASE)
+_FORTINET_ALLOWACCESS_SET = re.compile(r"^\s*set\s+allowaccess\s+(\S.*)$", re.IGNORECASE)
+_FORTINET_ALLOWACCESS_UNSET = re.compile(r"^\s*unset\s+allowaccess\b", re.IGNORECASE)
+_FORTINET_TRUSTHOST_SET = re.compile(r"^\s*set\s+trusthost\d+\s+(\S.*)$", re.IGNORECASE)
+_FORTINET_TRUSTHOST_UNSET = re.compile(r"^\s*unset\s+trusthost\d+\b", re.IGNORECASE)
 
 
 def _acl_entry_direction(removed: bool, action: str) -> str | None:
@@ -97,6 +107,7 @@ def _acl_entry_direction(removed: bool, action: str) -> str | None:
 def estimate_reachability_impact(script: str) -> ReachabilityEstimate:
     estimate = ReachabilityEstimate()
     current_vty: str | None = None
+    current_interface: str | None = None
     current_acl_name: str | None = None
 
     for raw_line in script.splitlines():
@@ -106,7 +117,8 @@ def estimate_reachability_impact(script: str) -> ReachabilityEstimate:
             continue
 
         if m := _INTERFACE_LINE.match(line):
-            estimate.touched_interfaces.append(m.group(1))
+            current_interface = m.group(1)
+            estimate.touched_interfaces.append(current_interface)
             current_vty = None
             current_acl_name = None
             continue
@@ -114,6 +126,7 @@ def estimate_reachability_impact(script: str) -> ReachabilityEstimate:
         if m := _VTY_LINE.match(line):
             current_vty = f"vty {m.group(1).strip()}"
             estimate.touched_interfaces.append(current_vty)
+            current_interface = None
             current_acl_name = None
             continue
 
@@ -132,6 +145,16 @@ def estimate_reachability_impact(script: str) -> ReachabilityEstimate:
                 estimate.newly_permitted.append(f"{context}: access-class {acl_name} removed — no longer ACL-restricted")
             else:
                 estimate.newly_blocked.append(f"{context}: access-class {acl_name} applied — now ACL-restricted")
+            continue
+
+        if m := _ACCESS_GROUP.match(line):
+            removed, acl_name = bool(m.group(1)), m.group(2)
+            context = current_interface or "an interface"
+            estimate.touched_acl_names.append(acl_name)
+            if removed:
+                estimate.newly_permitted.append(f"{context}: access-group {acl_name} removed — no longer ACL-restricted")
+            else:
+                estimate.newly_blocked.append(f"{context}: access-group {acl_name} applied — now ACL-restricted")
             continue
 
         if m := _NAMED_ACL_START.match(line):
@@ -156,12 +179,17 @@ def estimate_reachability_impact(script: str) -> ReachabilityEstimate:
                 getattr(estimate, direction).append(f"access-list {acl_num}: removes '{action} {rest}'")
             continue
 
-        if m := _FORTINET_TRUSTHOST.match(line):
+        if m := _FORTINET_TRUSTHOST_SET.match(line):
             estimate.newly_blocked.append(f"admin access restricted to trusted host {m.group(1).strip()}")
             continue
+        if _FORTINET_TRUSTHOST_UNSET.match(line):
+            estimate.newly_permitted.append("admin trusted-host restriction removed — no longer restricted to a specific host")
+            continue
 
-        if _FORTINET_ALLOWACCESS.match(line):
+        if _FORTINET_ALLOWACCESS_SET.match(line):
             continue  # replaces the whole allowed set — direction unknowable without the prior value
+        if _FORTINET_ALLOWACCESS_UNSET.match(line):
+            continue  # reverts to the platform default set — equally unknowable without the prior value
 
         if m := _ROUTE_STATEMENT.match(line):
             estimate.routing_statements_touched.append(stripped)

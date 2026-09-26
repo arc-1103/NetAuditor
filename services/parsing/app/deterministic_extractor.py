@@ -130,7 +130,11 @@ def _extract_cisco(config_text: str) -> dict:
     # Fail-closed on absence — matches generic_level1.rego's own two
     # "directly observable" exceptions (see module docstring).
     _set(baseline, "banners.login_banner_present", bool(scalars.get("BANNER_LOGIN")))
-    _set(baseline, "ntp.authentication_enabled", bool(scalars.get("NTP_AUTH")))
+    # NTP auth is evidence-only like everything else below (not one of the
+    # two fail-closed exceptions above) — only assert True on a positive
+    # match, never assert a confirmed False from silence.
+    if scalars.get("NTP_AUTH"):
+        _set(baseline, "ntp.authentication_enabled", True)
 
     ntp_servers = scalars.get("NTP_SERVER") or []
     if ntp_servers:
@@ -411,7 +415,11 @@ def _extract_arista(config_text: str) -> dict:
     # Fail-closed on absence — matches generic_level1.rego's own two
     # "directly observable" exceptions (see module docstring).
     _set(baseline, "banners.login_banner_present", bool(scalars.get("BANNER_LOGIN")))
-    _set(baseline, "ntp.authentication_enabled", bool(scalars.get("NTP_AUTH")))
+    # NTP auth is evidence-only like everything else below (not one of the
+    # two fail-closed exceptions above) — only assert True on a positive
+    # match, never assert a confirmed False from silence.
+    if scalars.get("NTP_AUTH"):
+        _set(baseline, "ntp.authentication_enabled", True)
 
     ntp_servers = scalars.get("NTP_SERVER") or []
     if ntp_servers:

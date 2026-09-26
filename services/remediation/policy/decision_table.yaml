@@ -9,7 +9,7 @@
 # Bump `version` on every edit to these rules — app/decision.py caches this
 # file for the process lifetime, and the version is what
 # ledger_events.ruleset_version records.
-version: "1.0.0"
+version: "1.1.0"
 
 # app/decision.py's inputs, and where they really come from today:
 #   parser_agreement — 0..1. docs/action.md Phase 2 shipped the real
@@ -49,6 +49,19 @@ rules:
     when: {parser_agreement_max: 0.95}
     action: DUAL_APPROVAL
     reason: "Parser agreement 90-95% — require two independent approvals."
+
+  # app/approval_matrix.py's docstring names this row explicitly: "HIGH
+  # risk, reachability-changing -> 2-person rule". Without it, a HIGH-risk
+  # finding with a nonzero blast radius but >=95% parser agreement fell
+  # through to single-approval-small-blast-radius below and was
+  # single-approved — the exact case that row exists to prevent. Checked
+  # before single-approval-small-blast-radius for the same reason
+  # auto-apply is checked first: the tighter/stricter rule must be tried
+  # before a looser one that would otherwise match first.
+  - id: dual-approval-high-risk-reachability-change
+    when: {risk: [HIGH], blast_radius_min: 1}
+    action: DUAL_APPROVAL
+    reason: "HIGH risk with a reachability change (blast radius >= 1) — requires two independent approvals regardless of parser confidence."
 
   # Checked before the single-approval row below: >=99% is a strict subset
   # of >=95%, so the tighter rule must be tried first or it would never fire.

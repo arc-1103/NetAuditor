@@ -20,3 +20,4 @@ scripts/README.md
 scripts/uv.lock
 gateway/uv.lock
 docker-compose.override.yml
+correctness.md
