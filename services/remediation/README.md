@@ -80,5 +80,14 @@ Useful endpoints:
 - `POST /remediation/{control_id}/approve` — approve/reject with `audit_run_id` in the body.
 
 `USE_MOCK_BATFISH=true` is intended for the prototype demo. It still runs the
-local lockout checks. Real Batfish mode intentionally requires a prepared
-network snapshot before it will produce a safe verdict.
+local lockout checks (`app/batfish_client.py:static_safety_checks`) and the
+deterministic ACL/route-diffing fallback (`app/reachability_fallback.py`,
+docs/Additional-Features.md §4) — a dependency-free reachability estimator
+that parses the proposed script's own ACL/access-class/route statements and
+flags a change that *widens* management-plane reachability (e.g. removing an
+access-class, deleting a `deny` entry), forcing `RISK_FLAGS` even when no
+static lockout pattern matched. It never flags routine narrowing (applying a
+new restriction), which is what most compliance fixes do. Real Batfish mode
+intentionally requires a prepared network snapshot before it will produce a
+safe verdict; the fallback above is deliberately not a substitute for that —
+see the module's own docstring for exactly what it can and can't detect.

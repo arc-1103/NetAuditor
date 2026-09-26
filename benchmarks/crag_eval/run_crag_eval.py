@@ -271,29 +271,33 @@ async def verdict_reproducibility(runs: int = 5) -> dict | None:
 REMEDIATION_FIXTURES = EVAL_DIR / "fixtures" / "remediation_scripts.json"
 
 
-def remediation_safety() -> dict:
+async def remediation_safety() -> dict:
     """Offline: true/false-positive rate of
-    services/remediation/app/batfish_client.py's static_safety_checks()
-    against a curated set of known-unsafe (would isolate/lock out a device)
-    and known-safe remediation scripts. This evaluates the static-check
-    layer only — the layer that actually runs in production today. Real
-    Batfish snapshot-based simulation isn't wired up (batfish_client.py
-    always returns UNAVAILABLE without USE_MOCK_BATFISH), so this eval
-    can't and doesn't claim to cover that."""
+    services/remediation/app/batfish_client.py's full preflight() — the
+    regex lockout checks (static_safety_checks) plus
+    services/remediation/app/reachability_fallback.py's deterministic
+    ACL/route-diffing fallback (docs/Additional-Features.md §4), which
+    forces RISK_FLAGS on a script that *widens* management/ACL reachability
+    (e.g. removing an access-class or a `deny` entry) even when no static
+    lockout pattern matched. This evaluates the two deterministic layers
+    that actually run in production today. Real Batfish snapshot-based
+    simulation isn't wired up (preflight() always returns UNAVAILABLE for
+    a clean script without USE_MOCK_BATFISH), so this eval can't and
+    doesn't claim to cover that."""
     with _isolated_service_import(REPO_ROOT / "services" / "remediation"):
         batfish_client = _load_module(
             REPO_ROOT / "services" / "remediation" / "app" / "batfish_client.py", "crag_eval_batfish_client"
         )
-        static_safety_checks = batfish_client.static_safety_checks
+        preflight = batfish_client.preflight
 
     cases = json.loads(REMEDIATION_FIXTURES.read_text())["cases"]
     results = []
     for case in cases:
-        flags = static_safety_checks(case["script"])
-        flagged = bool(flags)
+        result = await preflight(case["script"])
+        flagged = result.status != "SAFE"
         results.append({
             "name": case["name"], "expect_flagged": case["expect_flagged"],
-            "flagged": flagged, "flags": flags,
+            "flagged": flagged, "engine": result.engine, "flags": result.risk_flags,
             "correct": flagged == case["expect_flagged"],
         })
 
@@ -303,15 +307,15 @@ def remediation_safety() -> dict:
     false_positive_rate = sum(r["flagged"] for r in safe) / len(safe) if safe else None
 
     return {
-        "engine": "static-safety (batfish_client.static_safety_checks)",
+        "engine": "batfish_client.preflight (static-safety + reachability-fallback)",
         "true_positive_rate": true_positive_rate,
         "false_positive_rate": false_positive_rate,
         "cases": results,
     }
 
 
-async def _run_live_evals() -> tuple[dict | None, dict | None]:
-    return await evidence_linking_live(), await verdict_reproducibility()
+async def _run_live_evals() -> tuple[dict | None, dict | None, dict]:
+    return await evidence_linking_live(), await verdict_reproducibility(), await remediation_safety()
 
 
 def main() -> int:
@@ -319,13 +323,13 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
-    live_evidence, live_reproducibility = asyncio.run(_run_live_evals())
+    live_evidence, live_reproducibility, remediation_result = asyncio.run(_run_live_evals())
 
     report = {
         "corpus_benchmark": corpus_benchmark(),
         "evidence_linking": {"offline_coverage": evidence_coverage(), "live": live_evidence},
         "verdict_reproducibility": live_reproducibility,
-        "remediation_safety": remediation_safety(),
+        "remediation_safety": remediation_result,
     }
     rendered = json.dumps(report, indent=2) + "\n"
     if args.output:

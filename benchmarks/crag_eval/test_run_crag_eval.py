@@ -6,6 +6,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 spec = importlib.util.spec_from_file_location("run_crag_eval", Path(__file__).parent / "run_crag_eval.py")
 mod = importlib.util.module_from_spec(spec)
 sys.modules["run_crag_eval"] = mod
@@ -41,8 +43,9 @@ def test_evidence_coverage_has_no_uncovered_control_ids():
     assert len(result["control_ids"]) >= 11  # generic_level1.rego's 11-control illustrative subset
 
 
-def test_remediation_safety_perfect_tp_and_zero_fp_on_curated_cases():
-    result = mod.remediation_safety()
+@pytest.mark.asyncio
+async def test_remediation_safety_perfect_tp_and_zero_fp_on_curated_cases():
+    result = await mod.remediation_safety()
 
     assert result["true_positive_rate"] == 1.0
     assert result["false_positive_rate"] == 0.0
