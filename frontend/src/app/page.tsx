@@ -104,8 +104,8 @@ function TrustPanel({ runId, token }: { runId: string; token: string }) {
 }
 
 function ScoreRing({ value }: { value: number }) {
-  const color = value >= 80 ? "#47d7ac" : value >= 50 ? "#f6c85f" : "#ff6b6b";
-  return <div className="score-ring" style={{ background: `conic-gradient(${color} ${value * 3.6}deg, #23364a 0deg)` }}>
+  const color = value >= 80 ? "var(--score-good)" : value >= 50 ? "var(--score-mid)" : "var(--score-bad)";
+  return <div className="score-ring" style={{ background: `conic-gradient(${color} ${value * 3.6}deg, var(--ring-track) 0deg)` }}>
     <div><strong>{value}</strong><span>/100</span></div>
   </div>;
 }
@@ -433,6 +433,10 @@ export default function Home() {
   const [notice, setNotice] = useState(""); const [error, setError] = useState(""); const [dragging, setDragging] = useState(false);
   const [view, setView] = useState<"workspace" | "inventory" | "learning" | "reports" | "executive">("workspace");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Starts "dark" to match the SSR fallback; the hydration effect below
+  // immediately syncs it from the data-theme attribute the blocking script
+  // in layout.tsx already set on <html> before this ever paints.
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setToken(readSession("na_token", "")); setEmail(readSession("na_email", ""));
@@ -441,8 +445,14 @@ export default function Home() {
     setInventory(readLocal("na_inventory", []));
     setRemediations(readSession("na_remediations", []));
     setSidebarCollapsed(readSession("na_sidebar_collapsed", false));
+    setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
     setHydrated(true);
   }, []);
+  useEffect(() => {
+    if (!hydrated) return;
+    document.documentElement.setAttribute("data-theme", theme);
+    writeLocal("na_theme", theme);
+  }, [theme, hydrated]);
   // Guarded by `hydrated` so the fallback values above never overwrite the
   // real persisted state with blanks before the hydration effect runs.
   useEffect(() => { if (hydrated) writeLocal("na_inventory", inventory); }, [inventory, hydrated]);
@@ -525,7 +535,7 @@ export default function Home() {
 
   if (!token) return <Login onLogin={(newToken, userEmail, userRole) => { setToken(newToken); setEmail(userEmail); setRole(userRole); }} />;
   return <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-    <nav className="sidebar"><div className="sidebar-head"><div className="brand"><span className="brand-mark">N</span><span>NETAUDIT</span></div><button className="sidebar-toggle" onClick={() => setSidebarCollapsed((c) => !c)} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}>{sidebarCollapsed ? "»" : "«"}</button></div><div className="nav-items"><button className={view === "workspace" ? "active" : ""} onClick={() => setView("workspace")}>⌁<span>Audit workspace</span></button><button className={view === "inventory" ? "active" : ""} onClick={() => setView("inventory")}>▦<span>Device inventory</span></button><button className={view === "learning" ? "active" : ""} onClick={() => setView("learning")}>◎<span>Learning queue</span></button><button className={view === "reports" ? "active" : ""} onClick={() => setView("reports")}>◫<span>Reports</span></button><button className={view === "executive" ? "active" : ""} onClick={() => setView("executive")}>◆<span>Executive report</span></button></div><div className="method-card"><span className="pulse" /><strong>Decision boundary active</strong><p>AI extracts. OPA decides.</p></div><div className="user"><span>{email.slice(0, 1).toUpperCase()}</span><div><strong>{email}</strong><small>{role.charAt(0).toUpperCase() + role.slice(1)}</small></div></div></nav>
+    <nav className="sidebar"><div className="sidebar-head"><div className="brand"><span className="brand-mark">N</span><span>NETAUDIT</span></div><div className="sidebar-actions"><button className="theme-toggle" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>{theme === "dark" ? "☀" : "☾"}</button><button className="sidebar-toggle" onClick={() => setSidebarCollapsed((c) => !c)} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}>{sidebarCollapsed ? "»" : "«"}</button></div></div><div className="nav-items"><button className={view === "workspace" ? "active" : ""} onClick={() => setView("workspace")}>⌁<span>Audit workspace</span></button><button className={view === "inventory" ? "active" : ""} onClick={() => setView("inventory")}>▦<span>Device inventory</span></button><button className={view === "learning" ? "active" : ""} onClick={() => setView("learning")}>◎<span>Learning queue</span></button><button className={view === "reports" ? "active" : ""} onClick={() => setView("reports")}>◫<span>Reports</span></button><button className={view === "executive" ? "active" : ""} onClick={() => setView("executive")}>◆<span>Executive report</span></button></div><div className="method-card"><span className="pulse" /><strong>Decision boundary active</strong><p>AI extracts. OPA decides.</p></div><div className="user"><span>{email.slice(0, 1).toUpperCase()}</span><div><strong>{email}</strong><small>{role.charAt(0).toUpperCase() + role.slice(1)}</small></div></div></nav>
     {view === "inventory" ? <DeviceInventory inventory={inventory} onSelect={openFromInventory} /> : view === "learning" ? <LearningQueue token={token} /> : view === "reports" ? <ReportsView audit={audit} token={token} /> : view === "executive" ? <ExecutiveReportView token={token} /> :
       <div className="workspace"><header><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Audit workspace</h1></div><div className="header-actions"><span className="airgap">● WORKS WITHOUT INTERNET</span>{audit && <button className="secondary" onClick={report} disabled={!!busy}>{busy === "report" ? "Building report…" : "Download proof report"}</button>}</div></header>
         <section className="plain-guide"><strong>How NetAudit works</strong><span><b>1</b> Upload configuration</span><span><b>2</b> See risks with proof</span><span><b>3</b> Review suggested fix</span><span><b>4</b> Export report</span></section>
