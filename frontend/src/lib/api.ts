@@ -1,5 +1,7 @@
-import { mockAudit, mockRemediations } from "./mock";
-import type { AuditRun, Remediation } from "./types";
+import { mockAudit, mockExecutiveReport, mockLearningQueue, mockProvenance, mockRemediations, mockTrustView } from "./mock";
+import type { AuditRun, ExecutiveReport, LearningQueueItem, ProvenanceChain, Remediation, TrustView } from "./types";
+
+export type Role = "admin" | "operator" | "auditor";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const QWEN_BASE = process.env.NEXT_PUBLIC_QWEN_BASE_URL || "http://localhost:11434";
@@ -43,10 +45,15 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   return response.json() as Promise<T>;
 }
 
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, mockRole: Role = "admin") {
   if (USE_MOCK) {
     await wait(350);
-    return { access_token: "demo-token", user: { email, role: "admin" } };
+    // Real login's role comes from the server (gateway/app/auth.py's users
+    // table via the JWT) — the caller can't pick it. In mock mode there's no
+    // server to ask, so the login form itself offers a role picker, purely
+    // to make the real backend's role-scoped approval matrix (see
+    // approveRemediation below) demonstrable without a live gateway.
+    return { access_token: "demo-token", user: { email, role: mockRole } };
   }
   const response = await fetch(`${API_BASE}/api/login`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }),
@@ -80,20 +87,90 @@ export async function generateRemediations(runId: string, token: string): Promis
   return result.remediations;
 }
 
+// Mock-only: tracks distinct approvers per control_id across calls in this
+// browser session, the same role Postgres's ledger_events plays for the
+// real dual-approval quorum (services/remediation/app/db.py's approve()).
+const mockApprovers = new Map<string, Set<string>>();
+
+export interface ApprovalResult {
+  approval_status: "PENDING" | "APPROVED" | "REJECTED";
+  dual_approval?: { required: number; received: number } | null;
+}
+
 export async function approveRemediation(
   controlId: string,
   runId: string,
   approved: boolean,
   token: string,
-): Promise<{ approval_status: "APPROVED" | "REJECTED" }> {
+  role: Role,
+  actor: string,
+): Promise<ApprovalResult> {
   if (USE_MOCK) {
     await wait(400);
     const item = mockRemediations.find((entry) => entry.control_id === controlId);
-    if (approved && item?.preflight_status !== "SAFE") throw new Error("Approval blocked: preflight is not SAFE");
-    return { approval_status: approved ? "APPROVED" : "REJECTED" };
+    if (!item) throw new Error("Proposal not found");
+    if (!approved) { item.approval_status = "REJECTED"; return { approval_status: "REJECTED" }; }
+    if (item.preflight_status !== "SAFE") throw new Error("Approval blocked: preflight is not SAFE");
+
+    // Mirrors app/approval_matrix.py's check_permission exactly, so the
+    // role picker on the login screen demonstrates the real backend's rules.
+    const decision = item.decision;
+    const risk = decision?.risk ?? "HIGH";
+    const blastRadius = decision?.blast_radius_count ?? 0;
+    const action = decision?.action ?? "SINGLE_APPROVAL";
+    if (action === "BLOCK") throw new Error("This proposal's decision classification is BLOCK — it cannot be approved.");
+    if (role === "auditor") throw new Error("Role 'auditor' is not permitted to approve remediations.");
+    if (role === "operator") {
+      if (risk === "HIGH") throw new Error("Network Operator cannot approve a HIGH-risk change — requires Security Lead / Change Advisory.");
+      if (blastRadius > 0) throw new Error("Network Operator can only approve single-device changes.");
+    }
+
+    if (action === "DUAL_APPROVAL") {
+      const priorActors = mockApprovers.get(controlId) ?? new Set<string>();
+      priorActors.add(actor);
+      mockApprovers.set(controlId, priorActors);
+      const dual_approval = { required: 2, received: priorActors.size };
+      item.dual_approval = dual_approval;
+      if (priorActors.size < 2) { item.approval_status = "PENDING"; return { approval_status: "PENDING", dual_approval }; }
+      item.approval_status = "APPROVED";
+      return { approval_status: "APPROVED", dual_approval };
+    }
+
+    item.approval_status = "APPROVED";
+    return { approval_status: "APPROVED" };
   }
-  return request<{ approval_status: "APPROVED" | "REJECTED" }>(`/api/remediation/${encodeURIComponent(controlId)}/approve`, token, {
+  return request<ApprovalResult>(`/api/remediation/${encodeURIComponent(controlId)}/approve`, token, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approved, audit_run_id: runId, comment: "Reviewed in NetAudit dashboard" }),
+  });
+}
+
+export interface ApplyResult { audit_run_id: string; control_id: string; pre_change_baseline_sha256: string | null; applied_at: string; rollback_status: "APPLIED"; }
+export interface RollbackResult { audit_run_id: string; control_id: string; pre_change_baseline_sha256: string | null; rollback_status: "ROLLED_BACK"; }
+
+export async function applyRemediation(controlId: string, runId: string, token: string): Promise<ApplyResult> {
+  if (USE_MOCK) {
+    await wait(350);
+    const item = mockRemediations.find((entry) => entry.control_id === controlId);
+    if (item?.approval_status !== "APPROVED") throw new Error("Proposal not found, or it isn't APPROVED yet");
+    const applied_at = new Date().toISOString();
+    item.applied_at = applied_at; item.rollback_status = "APPLIED";
+    return { audit_run_id: runId, control_id: controlId, pre_change_baseline_sha256: item.pre_change_baseline_sha256 ?? null, applied_at, rollback_status: "APPLIED" };
+  }
+  return request<ApplyResult>(`/api/remediation/${encodeURIComponent(controlId)}/apply`, token, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audit_run_id: runId }),
+  });
+}
+
+export async function rollbackRemediation(controlId: string, runId: string, reason: string, token: string): Promise<RollbackResult> {
+  if (USE_MOCK) {
+    await wait(350);
+    const item = mockRemediations.find((entry) => entry.control_id === controlId);
+    if (!item?.applied_at) throw new Error("Proposal not found, or it was never marked APPLIED");
+    item.rollback_status = "ROLLED_BACK";
+    return { audit_run_id: runId, control_id: controlId, pre_change_baseline_sha256: item.pre_change_baseline_sha256 ?? null, rollback_status: "ROLLED_BACK" };
+  }
+  return request<RollbackResult>(`/api/remediation/${encodeURIComponent(controlId)}/rollback`, token, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audit_run_id: runId, reason }),
   });
 }
 
@@ -110,9 +187,40 @@ export async function generateReport(runId: string, token: string) {
   });
 }
 
-export async function getLearningQueue(token: string): Promise<{ items: any[] }> {
-  if (USE_MOCK) { await wait(300); return { items: [] }; }
-  return request<{ items: any[] }>("/api/learning/queue", token);
+export async function getLearningQueue(token: string): Promise<LearningQueueItem[]> {
+  // The real endpoint's response_model returns a bare array of
+  // {block_id, raw_text} — not {items: [...]}.
+  if (USE_MOCK) { await wait(300); return structuredClone(mockLearningQueue); }
+  return request<LearningQueueItem[]>("/api/learning/queue", token);
+}
+
+export interface LearningMapInput { block_id: string; cli_pattern: string; field: string; value: string; vendor?: string; os?: string | null; }
+
+export async function submitLearningMap(input: LearningMapInput, token: string): Promise<{ confirmed: boolean; block_id: string; was_queued: boolean }> {
+  if (USE_MOCK) {
+    await wait(400);
+    const index = mockLearningQueue.findIndex((item) => item.block_id === input.block_id);
+    if (index >= 0) mockLearningQueue.splice(index, 1);
+    return { confirmed: true, block_id: input.block_id, was_queued: true };
+  }
+  return request(`/api/learning/map`, token, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  });
+}
+
+export async function getExecutiveReport(token: string): Promise<ExecutiveReport> {
+  if (USE_MOCK) { await wait(600); return structuredClone(mockExecutiveReport); }
+  return request<ExecutiveReport>("/api/executive-report", token);
+}
+
+export async function getAuditTrust(runId: string, token: string): Promise<TrustView> {
+  if (USE_MOCK) { await wait(400); return structuredClone(mockTrustView); }
+  return request<TrustView>(`/api/audit-runs/${runId}/trust`, token);
+}
+
+export async function getProvenance(runId: string, controlId: string, token: string): Promise<ProvenanceChain> {
+  if (USE_MOCK) { await wait(400); return structuredClone(mockProvenance(controlId)); }
+  return request<ProvenanceChain>(`/api/provenance/${runId}/${encodeURIComponent(controlId)}`, token);
 }
 
 export function reportUrl(runId: string, kind: "download" | "preview" | "json" | "cef") {
