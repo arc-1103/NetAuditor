@@ -39,8 +39,11 @@ app.add_middleware(
 
 class OperationalMiddleware:
     """Pure ASGI request IDs, access logging and bounded per-client rate limiting."""
-    def __init__(self, application):
-        self.application = application
+    def __init__(self, app):
+        # Starlette constructs middleware with the wrapped application as the
+        # keyword argument `app`; keeping that public ASGI convention avoids a
+        # runtime TypeError when the middleware stack is built.
+        self.application = app
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
