@@ -498,4 +498,4 @@ def _dispatch_unknown_blocks(job_id: str, device_context: DeviceContext, unknown
 
 
 if __name__ == "__main__":
-    celery_app.worker_main(["worker", "--loglevel=info", "--concurrency=2", "-Q", "parsing"])
+    celery_app.worker_main(["worker", "--loglevel=info", "--pool=solo", "-Q", "parsing"])

@@ -196,8 +196,11 @@ class OllamaSLMClient:
         elif telnet_enabled == "ENABLED":
             lines.append("transport input telnet")
 
-        if (baseline_json.get("aaa") or {}).get("password_encryption") == "ENABLED":
+        password_encryption = (baseline_json.get("aaa") or {}).get("password_encryption")
+        if password_encryption == "ENABLED":
             lines.append("service password-encryption")
+        elif password_encryption == "DISABLED":
+            lines.append("no service password-encryption")
 
         http_enabled = (baseline_json.get("services") or {}).get("http_server_enabled")
         if http_enabled == "DISABLED":
@@ -207,6 +210,16 @@ class OllamaSLMClient:
 
         for host in (baseline_json.get("logging") or {}).get("syslog_hosts") or []:
             lines.append(f"logging host {host}")
+
+        for community in (baseline_json.get("snmp") or {}).get("community_strings") or []:
+            lines.append(f"snmp-server community {community}")
+
+        for policy in (baseline_json.get("crypto") or {}).get("ike_policies") or []:
+            if policy.get("policy_id") is not None and policy.get("encryption"):
+                # Forward pattern maps "3des" -> "3DES", "aes 256" -> "AES256"
+                # via _map_encryption; emit the lowercase token it accepts.
+                lines.append(f"crypto isakmp policy {policy['policy_id']}")
+                lines.append(f" encryption {str(policy['encryption']).lower()}")
 
         ntp = baseline_json.get("ntp") or {}
         for server in ntp.get("servers") or []:

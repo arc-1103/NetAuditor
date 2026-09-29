@@ -2,6 +2,11 @@ networks:
   audit-net:
     internal: true
     name: ${NETWORK_NAME:-audit-net}
+  # Docker never publishes ports for containers attached only to an internal
+  # network. Only the ingress services (gateway, frontend, nginx) join this one;
+  # everything else stays on audit-net with no route out.
+  edge:
+    name: ${EDGE_NETWORK_NAME:-audit-edge}
 
 services:
   postgres:
@@ -29,7 +34,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: quay.io/minio/minio
+    image: chainguard/minio:latest
     env_file: .env
     command: server /data --console-address ":9001"
     volumes:
@@ -69,8 +74,13 @@ services:
     image: ollama/ollama
     profiles: ["model"]
     networks: [audit-net]
+    environment:
+      # Keep the model resident: a cold load can take 90s+ from a bind mount and
+      # would otherwise recur after every 5 idle minutes, timing out the parser.
+      OLLAMA_KEEP_ALIVE: "-1"
     volumes:
-      - ./infra/ollama:/root/.ollama
+      # Point OLLAMA_MODELS_DIR at an existing host Ollama model folder to reuse it.
+      - ${OLLAMA_MODELS_DIR:-./infra/ollama/models}:/root/.ollama/models
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -237,7 +247,7 @@ services:
       compliance: {condition: service_healthy}
       remediation: {condition: service_healthy}
       reporting: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [audit-net, edge]
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
     healthcheck:
@@ -255,19 +265,19 @@ services:
         NEXT_PUBLIC_USE_MOCK_API: ${NEXT_PUBLIC_USE_MOCK_API:-false}
     depends_on:
       gateway: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [audit-net, edge]
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     restart: unless-stopped
 
   nginx:
     build:
-      context: .
-      dockerfile: infra/nginx/Dockerfile
+      context: ./infra/nginx
+      dockerfile: Dockerfile
     depends_on:
       gateway: {condition: service_healthy}
       frontend: {condition: service_started}
-    networks: [audit-net]
+    networks: [audit-net, edge]
     ports:
       - "${NGINX_PORT:-443}:443"
     volumes:

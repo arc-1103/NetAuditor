@@ -283,6 +283,9 @@ function ReportsView({ audit, token }: { audit: AuditRun | null; token: string }
     try {
       if (kind === "download") {
         await generateReport(audit.id, token);
+        // Live mode: generateReport only builds the report server-side; the PDF
+        // still has to be fetched with the auth header and opened.
+        if (!USE_MOCK) await openProtectedReport(audit.id, token, "download");
       } else if (USE_MOCK) {
         // generateReport's own mock branch already does this for
         // "download" — json/cef need the same client-side fallback rather

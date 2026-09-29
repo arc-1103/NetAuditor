@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir /app/services/schema
 
 COPY services/parsing/app /app/services/parsing/app
 COPY services/parsing/prompts /app/services/parsing/prompts
+COPY services/parsing/textfsm_templates /app/services/parsing/textfsm_templates
 ENV PYTHONPATH=/app/services/parsing
 WORKDIR /app/services/parsing
 
