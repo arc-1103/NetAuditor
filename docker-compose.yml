@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio
+    image: quay.io/minio/minio
     env_file: .env
     command: server /data --console-address ":9001"
     volumes:
