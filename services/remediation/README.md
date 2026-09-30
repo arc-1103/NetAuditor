@@ -50,10 +50,10 @@ Findings that already have a template are entirely unaffected — this
 fallback only exists for the gap compliance's README already documents
 ("every other vendor gets a full compliance verdict but `remediation: null`
 until someone adds a `.j2` template"). The bulk
-`POST /remediation/audit-runs/{id}/generate` endpoint does not use this
-fallback yet: `db.get_findings()` only selects persisted compliance-finding
-columns, which don't include device vendor/OS, so there's nothing to query
-the manual index or the SLM with for that path today.
+`POST /remediation/audit-runs/{id}/generate` endpoint routes through the
+same `_build_proposal` fallback: `db.get_findings()` returns every finding
+regardless of `remediation`, and `db.get_run_device()` supplies the
+audit run's `detected_vendor`/`detected_os` for the SLM/manual-index query.
 
 ## Deploying to an existing database
 

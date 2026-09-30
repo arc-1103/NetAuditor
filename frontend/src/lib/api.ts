@@ -1,5 +1,5 @@
 import { mockAudit, mockExecutiveReport, mockLearningQueue, mockProvenance, mockRemediations, mockTrustView } from "./mock";
-import type { AuditRun, ExecutiveReport, LearningQueueItem, ProvenanceChain, Remediation, TrustView } from "./types";
+import type { AuditRun, ExecutiveReport, FixSimulation, LearningQueueItem, ProvenanceChain, Remediation, TopologyGraph, TrustView } from "./types";
 
 export type Role = "admin" | "operator" | "auditor";
 
@@ -216,6 +216,16 @@ export async function getExecutiveReport(token: string): Promise<ExecutiveReport
 export async function getAuditTrust(runId: string, token: string): Promise<TrustView> {
   if (USE_MOCK) { await wait(400); return structuredClone(mockTrustView); }
   return request<TrustView>(`/api/audit-runs/${runId}/trust`, token);
+}
+
+export async function simulateFix(runId: string, controlId: string, token: string): Promise<FixSimulation> {
+  if (USE_MOCK) throw new Error("Fix simulation needs a live backend — not available in demo mode");
+  return request<FixSimulation>(`/api/audit-runs/${runId}/counterfactual/${encodeURIComponent(controlId)}`, token);
+}
+
+export async function getTopology(runId: string, token: string): Promise<TopologyGraph> {
+  if (USE_MOCK) return { center: null, nodes: [], edges: [] };
+  return request<TopologyGraph>(`/api/audit-runs/${runId}/topology`, token);
 }
 
 export async function getProvenance(runId: string, controlId: string, token: string): Promise<ProvenanceChain> {

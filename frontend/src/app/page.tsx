@@ -3,10 +3,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   applyRemediation, approveRemediation, askLocalQwen, generateRemediations, generateReport, getAudit,
-  getAuditTrust, getExecutiveReport, getLearningQueue, getProvenance, login, openProtectedReport,
-  rollbackRemediation, Role, submitLearningMap, uploadConfig, USE_MOCK,
+  getAuditTrust, getExecutiveReport, getLearningQueue, getProvenance, getTopology, login, openProtectedReport,
+  rollbackRemediation, Role, simulateFix, submitLearningMap, uploadConfig, USE_MOCK,
 } from "../lib/api";
-import type { AuditRun, ExecutiveReport, Finding, LearningQueueItem, ProvenanceChain, Remediation, Severity, TrustView } from "../lib/types";
+import type { AuditRun, ExecutiveReport, Finding, FixSimulation, LearningQueueItem, ProvenanceChain, Remediation, Severity, TopologyGraph, TrustView } from "../lib/types";
 
 const severityOrder: Severity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const ROLES: Role[] = ["admin", "operator", "auditor"];
@@ -103,6 +103,64 @@ function TrustPanel({ runId, token }: { runId: string; token: string }) {
   </section>;
 }
 
+function SimulationPanel({ runId, controlId, token }: { runId: string; controlId: string; token: string }) {
+  const [result, setResult] = useState<FixSimulation | null>(null);
+  const [state, setState] = useState<"idle" | "running" | "error">("idle");
+  const [message, setMessage] = useState("");
+  useEffect(() => { setResult(null); setState("idle"); setMessage(""); }, [runId, controlId]);
+  async function run() {
+    setState("running"); setMessage("");
+    try { setResult(await simulateFix(runId, controlId, token)); setState("idle"); }
+    catch (reason) { setState("error"); setMessage(reason instanceof Error ? reason.message : "Simulation failed"); }
+  }
+  const delta = result ? Math.round(result.compliance_delta) : 0;
+  return <section><div className="remediation-title"><h3>Simulate this fix</h3><span className="model-state">WHAT-IF</span></div>
+    <p className="muted">Re-scores this device as if the control were fixed, using the same policy engine. It assumes the fix achieves the intended setting.</p>
+    <button className="secondary" onClick={run} disabled={state === "running"}>{state === "running" ? "Simulating…" : result ? "Run again" : "Simulate fix"}</button>
+    {state === "error" && <p className="source">{message}</p>}
+    {result && <div className="sim-result">
+      <div className="sim-score"><span>{Math.round(result.current.compliance_score)}</span><b>→</b><span>{Math.round(result.proposed.compliance_score)}</span><em className={delta >= 0 ? "up" : "down"}>{delta >= 0 ? "+" : ""}{delta}</em></div>
+      <p className="source">Resolves {result.violations_resolved.length ? result.violations_resolved.join(", ") : "nothing"} · introduces {result.violations_introduced.length ? result.violations_introduced.join(", ") : "nothing new"}</p>
+      <span className={`preflight ${result.verdict === "SAFE" ? "safe" : "risk_flags"}`}>{result.verdict === "SAFE" ? "NO REGRESSION" : "RISK FLAG"} · {result.risk} RISK</span>
+    </div>}
+  </section>;
+}
+
+function TopologyPanel({ runId, token, affected }: { runId: string; token: string; affected?: string[] }) {
+  const [graph, setGraph] = useState<TopologyGraph | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setGraph(null); setFailed(false);
+    getTopology(runId, token).then(setGraph).catch(() => setFailed(true));
+  }, [runId, token]);
+  const W = 360, H = 250, cx = W / 2, cy = H / 2 - 6, radius = 88;
+  const nodes = graph?.nodes ?? [];
+  const others = nodes.filter((n) => n.id !== graph?.center);
+  const pos = new Map<string, { x: number; y: number }>();
+  if (graph?.center) pos.set(graph.center, { x: cx, y: cy });
+  others.forEach((n, i) => {
+    const angle = (2 * Math.PI * i) / others.length - Math.PI / 2;
+    pos.set(n.id, { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+  });
+  const label = (n: TopologyGraph["nodes"][number]) => n.kind === "unresolved" ? (n.ip || "unscanned") : (n.hostname || n.id.slice(0, 8));
+  return <section className="topology"><h3>Network neighborhood</h3>
+    {failed ? <p className="source">Topology service unavailable.</p>
+      : !graph ? <p className="source">Loading topology…</p>
+      : others.length === 0 ? <p className="source">No routing neighbors known for this device. Topology needs Neo4j (docker compose --profile advanced) and other audited devices that peer with it.</p>
+      : <>
+        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Routing neighborhood: ${others.length} connected device${others.length === 1 ? "" : "s"}`}>
+          {graph.edges.map((e, i) => { const a = pos.get(e.source), b = pos.get(e.target); return a && b ? <line key={i} className="topo-edge" x1={a.x} y1={a.y} x2={b.x} y2={b.y}><title>{e.protocol || "routes to"}</title></line> : null; })}
+          {nodes.map((n) => { const p = pos.get(n.id); if (!p) return null; const isCenter = n.id === graph.center;
+            return <g key={n.id} className={`topo-node ${isCenter ? "center" : n.kind}`} transform={`translate(${p.x},${p.y})`}>
+              <circle r={isCenter ? 14 : 10} /><title>{n.kind === "unresolved" ? `Not yet scanned · ${n.ip}` : `${n.hostname || n.id}${n.vendor ? ` · ${n.vendor}` : ""}`}</title>
+              <text y={isCenter ? 28 : 24} textAnchor="middle">{label(n)}</text>
+            </g>; })}
+        </svg>
+        <p className="source">{others.length} device{others.length === 1 ? "" : "s"} reachable via routing adjacency{affected?.length ? ` · ${affected.length} in this finding's blast radius` : ""}. Dashed nodes are peers that haven&apos;t been audited yet.</p>
+      </>}
+  </section>;
+}
+
 function ScoreRing({ value }: { value: number }) {
   const color = value >= 80 ? "var(--score-good)" : value >= 50 ? "var(--score-mid)" : "var(--score-bad)";
   return <div className="score-ring" style={{ background: `conic-gradient(${color} ${value * 3.6}deg, var(--ring-track) 0deg)` }}>
@@ -144,15 +202,17 @@ function ProvenancePanel({ runId, controlId, token }: { runId: string; controlId
   </section>;
 }
 
-function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, busy, runId, token, role }: {
+function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, onClose, busy, runId, token, role }: {
   finding: Finding; remediation?: Remediation;
   onDecision: (approved: boolean) => void;
   onApply: () => void;
   onRollback: (reason: string) => void;
+  onClose: () => void;
   busy: boolean; runId: string; token: string; role: Role;
 }) {
   const status = remediation?.preflight_status || remediation?.preflight?.status;
   const flags = remediation?.risk_flags || remediation?.preflight?.risk_flags || [];
+  const [minimized, setMinimized] = useState(false);
   const [qwenAnswer, setQwenAnswer] = useState("");
   const [qwenStatus, setQwenStatus] = useState("");
   const [rollbackReason, setRollbackReason] = useState("");
@@ -169,9 +229,18 @@ function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, b
     || (role === "operator" && remediation?.decision && (remediation.decision.risk === "HIGH" || remediation.decision.blast_radius_count > 0));
   const isApplied = remediation?.applied_at != null;
   const isRolledBack = remediation?.rollback_status === "ROLLED_BACK";
-  return <aside className="drawer">
-    <div className="drawer-head"><div><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><p>{finding.control_id} · {finding.framework}</p></div></div>
+  return <>
+  {!minimized && <div className="drawer-backdrop" onClick={onClose} />}
+  <aside className={`drawer ${minimized ? "minimized" : ""}`}>
+    <div className="drawer-head">
+      <div><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><p>{finding.control_id} · {finding.framework}</p></div>
+      <div className="drawer-controls">
+        <button onClick={() => setMinimized((m) => !m)} aria-label={minimized ? "Expand panel" : "Minimize panel"} title={minimized ? "Expand" : "Minimize"}>{minimized ? "▸" : "–"}</button>
+        <button onClick={onClose} aria-label="Close panel" title="Close">×</button>
+      </div>
+    </div>
     <h2>{finding.title}</h2>
+    {!minimized && <>
     <section><h3>What we found</h3><pre className="evidence">{finding.evidence}</pre><EvidenceLines finding={finding} /></section>
     <section><h3>Why this matters</h3><p className="muted">In simple terms, this setting may let an attacker reach or control the device more easily. A person must review every suggested fix before approval.</p>{finding.blast_radius?.length ? <p className="blast">Other devices that may be affected · {finding.blast_radius.join(" · ")}</p> : null}</section>
     <section className="qwen-box"><div className="remediation-title"><h3>Live local AI</h3><span className={`model-state ${qwenStatus}`}>{qwenStatus === "ready" ? "QWEN LIVE" : "OPTIONAL"}</span></div><p className="muted">Ask locally running Qwen to explain this result in everyday language. It explains; fixed rules still decide.</p><button className="secondary" onClick={explain} disabled={qwenStatus === "asking"}>{qwenStatus === "asking" ? "Qwen is thinking…" : "Ask Qwen to explain"}</button>{qwenAnswer && <p className="ai-answer">{qwenAnswer}</p>}{qwenStatus === "error" && <p className="source">Local model unavailable. Run: ollama serve</p>}</section>
@@ -203,8 +272,12 @@ function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, b
       </div>}
       {isRolledBack && <p className="source"><span className="badge rolled-back">ROLLED BACK</span></p>}
     </section>}
+    <SimulationPanel runId={runId} controlId={finding.control_id} token={token} />
+    <TopologyPanel runId={runId} token={token} affected={finding.blast_radius} />
     <ProvenancePanel runId={runId} controlId={finding.control_id} token={token} />
-  </aside>;
+    </>}
+  </aside>
+  </>;
 }
 
 function TeachForm({ item, token, onTaught }: { item: LearningQueueItem; token: string; onTaught: (blockId: string) => void }) {
@@ -265,8 +338,38 @@ function LearningQueue({ token }: { token: string }) {
   </div>;
 }
 
+function DriftCompare({ inventory }: { inventory: AuditRun[] }) {
+  const [beforeId, setBeforeId] = useState("");
+  const [afterId, setAfterId] = useState("");
+  const before = inventory.find((r) => r.id === beforeId);
+  const after = inventory.find((r) => r.id === afterId);
+  const label = (r: AuditRun) => `${r.original_filename} · ${new Date(r.created_at).toLocaleString()}`;
+  const beforeIds = new Set(before?.findings.map((f) => f.control_id));
+  const afterIds = new Set(after?.findings.map((f) => f.control_id));
+  const groups = before && after ? [
+    { title: "Resolved", tone: "safe", items: before.findings.filter((f) => !afterIds.has(f.control_id)) },
+    { title: "New", tone: "unavailable", items: after.findings.filter((f) => !beforeIds.has(f.control_id)) },
+    { title: "Still failing", tone: "risk_flags", items: after.findings.filter((f) => beforeIds.has(f.control_id)) },
+  ] : [];
+  const scoreBefore = before?.summary.compliance_score, scoreAfter = after?.summary.compliance_score;
+  return <section className="drift"><div className="section-title"><div><p className="eyebrow">CHANGE OVER TIME</p><h2>Compare two audits</h2></div></div>
+    <div className="drift-pickers">
+      <label>Earlier audit<select value={beforeId} onChange={(e) => setBeforeId(e.target.value)}><option value="">Choose…</option>{inventory.map((r) => <option key={r.id} value={r.id}>{label(r)}</option>)}</select></label>
+      <label>Later audit<select value={afterId} onChange={(e) => setAfterId(e.target.value)}><option value="">Choose…</option>{inventory.map((r) => <option key={r.id} value={r.id}>{label(r)}</option>)}</select></label>
+    </div>
+    {inventory.length < 2 && <p className="source">Audit at least two configurations to compare them.</p>}
+    {before && after && <>
+      {scoreBefore != null && scoreAfter != null && <p className="drift-score">Score {Math.round(scoreBefore)} → {Math.round(scoreAfter)} <em className={scoreAfter >= scoreBefore ? "up" : "down"}>{scoreAfter >= scoreBefore ? "+" : ""}{Math.round(scoreAfter - scoreBefore)}</em></p>}
+      {groups.map((g) => <div key={g.title} className="drift-group"><div className="remediation-title"><h3>{g.title}</h3><span className={`preflight ${g.tone}`}>{g.items.length}</span></div>
+        {g.items.length === 0 ? <p className="source">None</p> : g.items.map((f) => <p key={f.control_id} className="drift-row"><span className={`severity ${f.severity.toLowerCase()}`}>{f.severity}</span> {f.control_id} · {f.title}</p>)}
+      </div>)}
+    </>}
+  </section>;
+}
+
 function DeviceInventory({ inventory, onSelect }: { inventory: AuditRun[]; onSelect: (run: AuditRun) => void }) {
   return <div className="workspace"><header><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Device inventory</h1></div></header>
+    {inventory.length > 0 && <DriftCompare inventory={inventory} />}
     {inventory.length === 0 ? <p className="muted">No device has been audited yet this session. Upload a configuration from Audit workspace first.</p> : <div className="finding-list">{inventory.map((run) => <button key={run.id} onClick={() => onSelect(run)} style={{ gridTemplateColumns: "1fr auto" }}>
       <div><strong>{run.original_filename}</strong><p>Vendor {run.device?.detected_vendor || "Detected"} · OS {run.device?.detected_os || "Unknown"} · Parse confidence {Math.round((run.device?.parsing_confidence || 0) * 100)}% · SHA-256 {run.file_hash.slice(0, 16)}…</p></div>
       <span className="finding-state">{run.summary?.total_findings ?? 0} findings</span>
@@ -461,7 +564,7 @@ export default function Home() {
   useEffect(() => { if (hydrated) writeLocal("na_inventory", inventory); }, [inventory, hydrated]);
   useEffect(() => { if (hydrated) writeSession("na_sidebar_collapsed", sidebarCollapsed); }, [sidebarCollapsed, hydrated]);
   useEffect(() => { if (hydrated) { writeSession("na_token", token); writeSession("na_email", email); } }, [token, email, hydrated]);
-  useEffect(() => { if (hydrated) { writeSession("na_audit", audit); if (audit) setSelected((current) => current || audit.findings[0] || null); } }, [audit, hydrated]);
+  useEffect(() => { if (hydrated) writeSession("na_audit", audit); }, [audit, hydrated]);
   useEffect(() => { if (hydrated) writeSession("na_remediations", remediations); }, [remediations, hydrated]);
   useEffect(() => { if (hydrated) writeSession("na_role", role); }, [role, hydrated]);
   const selectedRemediation = useMemo(() => remediations.find((item) => item.control_id === selected?.control_id), [remediations, selected]);
@@ -477,7 +580,7 @@ export default function Home() {
       const run = await getAudit(uploaded.job_id, token);
       const completed = { ...run, original_filename: USE_MOCK ? file.name : run.original_filename };
       setAudit(completed);
-      setSelected(run.findings[0] || null);
+      setSelected(null);
       setInventory((prev) => [completed, ...prev.filter((item) => item.id !== completed.id)]);
       setNotice(run.status === "NEEDS_REVIEW" ? "No compliance verdict was issued: parsing evidence requires human review." : "Audit completed. Every verdict below was produced by version-controlled policy.");
     }
@@ -488,7 +591,7 @@ export default function Home() {
     setAudit(null); setSelected(null); setRemediations([]); setError(""); setNotice(""); setBusy("");
   }
   function openFromInventory(run: AuditRun) {
-    setAudit(run); setSelected(run.findings[0] || null); setRemediations([]); setError(""); setNotice(""); setView("workspace");
+    setAudit(run); setSelected(null); setRemediations([]); setError(""); setNotice(""); setView("workspace");
   }
   async function remediationAction() {
     if (!audit) return; setBusy("remediation"); setError("");
@@ -540,7 +643,7 @@ export default function Home() {
   return <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
     <nav className="sidebar"><div className="sidebar-head"><div className="brand"><span className="brand-mark">N</span><span>NETAUDIT</span></div><div className="sidebar-actions"><button className="theme-toggle" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>{theme === "dark" ? "☀" : "☾"}</button><button className="sidebar-toggle" onClick={() => setSidebarCollapsed((c) => !c)} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}>{sidebarCollapsed ? "»" : "«"}</button></div></div><div className="nav-items"><button className={view === "workspace" ? "active" : ""} onClick={() => setView("workspace")}>⌁<span>Audit workspace</span></button><button className={view === "inventory" ? "active" : ""} onClick={() => setView("inventory")}>▦<span>Device inventory</span></button><button className={view === "learning" ? "active" : ""} onClick={() => setView("learning")}>◎<span>Learning queue</span></button><button className={view === "reports" ? "active" : ""} onClick={() => setView("reports")}>◫<span>Reports</span></button><button className={view === "executive" ? "active" : ""} onClick={() => setView("executive")}>◆<span>Executive report</span></button></div><div className="method-card"><span className="pulse" /><strong>Decision boundary active</strong><p>AI extracts. OPA decides.</p></div><div className="user"><span>{email.slice(0, 1).toUpperCase()}</span><div><strong>{email}</strong><small>{role.charAt(0).toUpperCase() + role.slice(1)}</small></div></div></nav>
     {view === "inventory" ? <DeviceInventory inventory={inventory} onSelect={openFromInventory} /> : view === "learning" ? <LearningQueue token={token} /> : view === "reports" ? <ReportsView audit={audit} token={token} /> : view === "executive" ? <ExecutiveReportView token={token} /> :
-      <div className="workspace"><header><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Audit workspace</h1></div><div className="header-actions"><span className="airgap">● WORKS WITHOUT INTERNET</span>{audit && <button className="secondary" onClick={report} disabled={!!busy}>{busy === "report" ? "Building report…" : "Download proof report"}</button>}</div></header>
+      <div className="workspace"><header><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Audit workspace</h1></div><div className="header-actions"><span className="airgap">● WORKS WITHOUT INTERNET</span>{audit && <button className="secondary" onClick={newAudit} disabled={!!busy}>Upload new config</button>}{audit && <button className="secondary" onClick={report} disabled={!!busy}>{busy === "report" ? "Building report…" : "Download proof report"}</button>}</div></header>
         <section className="plain-guide"><strong>How NetAudit works</strong><span><b>1</b> Upload configuration</span><span><b>2</b> See risks with proof</span><span><b>3</b> Review suggested fix</span><span><b>4</b> Export report</span></section>
         {notice && <div className="alert success">{notice}<button onClick={() => setNotice("")}>×</button></div>}{error && <div className="alert error">{error}<button onClick={() => setError("")}>×</button></div>}
         {!audit ? <section className="upload-stage"><div className="stage-copy"><p className="eyebrow">NEW ASSESSMENT</p><h2>Turn raw configuration into defensible evidence.</h2><p>Upload a Cisco or Fortinet text configuration. Secrets are redacted before immutable storage; compliance decisions remain deterministic.</p><div className="pipeline"><span>01<br /><b>Ingest</b></span><i /> <span>02<br /><b>Normalize</b></span><i /> <span>03<br /><b>Evaluate</b></span><i /> <span>04<br /><b>Remediate</b></span></div></div><label className={`dropzone ${dragging ? "dragging" : ""}`} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}><input type="file" accept=".cfg,.conf,.txt" onChange={(e) => handleFile(e.target.files?.[0])} /><span className="upload-icon">↥</span><strong>{busy === "upload" ? "Evaluating configuration…" : "Drop a configuration here"}</strong><p>or click to browse · .cfg, .conf, .txt · max 10 MB</p></label></section> : <>
@@ -548,7 +651,8 @@ export default function Home() {
           <section className="metrics">{audit.summary.compliance_score !== null ? <div className="score-card"><ScoreRing value={audit.summary.control_pass_rate ?? audit.summary.compliance_score} /><div><p>Prototype checks passed</p><strong>{audit.summary.controls_passed ?? 0} of {audit.summary.controls_evaluated ?? 11} checks passed</strong><span>CIS-inspired demo rules · not a certification claim</span></div></div> : <div className="empty-card"><p>Not yet evaluated.</p><span>Parsing evidence requires human review before a compliance score exists.</span></div>}{severityOrder.map((level) => <div className="metric" key={level}><span className={`dot ${level.toLowerCase()}`} /><p>{level}</p><strong>{audit.summary.by_severity[level] || 0}</strong></div>)}</section>
           <ConfidenceLedger device={audit.device} />
           <TrustPanel runId={audit.id} token={token} />
-          <section className="results-layout"><div className="findings"><div className="section-title"><div><p className="eyebrow">POLICY VERDICTS</p><h2>Findings</h2></div><span>{audit.findings.length} failed controls</span></div><div className="finding-list">{audit.findings.map((finding) => { const proposal = remediations.find((item) => item.control_id === finding.control_id); return <button key={finding.control_id} className={selected?.control_id === finding.control_id ? "selected" : ""} onClick={() => setSelected(finding)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><div><strong>{finding.title}</strong><p>{finding.control_id} · {finding.evidence}</p></div><span className="finding-state">{proposal?.applied_at ? "APPLIED" : proposal?.approval_status === "APPROVED" ? "✓ APPROVED" : proposal ? (proposal.preflight_status || proposal.preflight?.status) : "REVIEW"}</span><b>›</b></button>; })}</div></div>{selected && <FindingPanel finding={selected} remediation={selectedRemediation} onDecision={decide} onApply={applyFix} onRollback={rollbackFix} busy={busy === "decision"} runId={audit.id} token={token} role={role} />}</section>
+          <section className="results-layout"><div className="findings"><div className="section-title"><div><p className="eyebrow">POLICY VERDICTS</p><h2>Findings</h2></div><span>{audit.findings.length} failed controls</span></div><div className="finding-list">{audit.findings.map((finding) => { const proposal = remediations.find((item) => item.control_id === finding.control_id); return <button key={finding.control_id} className={selected?.control_id === finding.control_id ? "selected" : ""} onClick={() => setSelected(finding)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><div><strong>{finding.title}</strong><p>{finding.control_id} · {finding.evidence}</p></div><span className="finding-state">{proposal?.applied_at ? "APPLIED" : proposal?.approval_status === "APPROVED" ? "✓ APPROVED" : proposal ? (proposal.preflight_status || proposal.preflight?.status) : "REVIEW"}</span><b>›</b></button>; })}</div></div></section>
+          {selected && <FindingPanel finding={selected} remediation={selectedRemediation} onDecision={decide} onApply={applyFix} onRollback={rollbackFix} onClose={() => setSelected(null)} busy={busy === "decision"} runId={audit.id} token={token} role={role} />}
         </>}
       </div>}
   </main>;

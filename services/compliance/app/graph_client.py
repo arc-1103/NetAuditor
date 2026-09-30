@@ -42,6 +42,12 @@ class TopologyGraphProvider(Protocol):
         routing adjacency, excluding `device_id` itself."""
         ...
 
+    async def topology(self, device_id: str, *, max_hops: int) -> dict[str, Any]:
+        """{"nodes": [{id, kind, hostname, vendor}], "edges": [{source,
+        target, protocol}]} for `device_id` and everything within
+        `max_hops` of it — the same neighborhood blast_radius() walks."""
+        ...
+
 
 class EmptyTopologyGraphProvider:
     """Safe default: Compliance works when Neo4j is unavailable or unconfigured."""
@@ -51,6 +57,9 @@ class EmptyTopologyGraphProvider:
 
     async def blast_radius(self, device_id: str, *, max_hops: int) -> list[str]:
         return []
+
+    async def topology(self, device_id: str, *, max_hops: int) -> dict[str, Any]:
+        return {"nodes": [], "edges": []}
 
 
 class Neo4jTopologyGraphProvider:
@@ -180,6 +189,46 @@ class Neo4jTopologyGraphProvider:
         cursor = await tx.run(query, device_id=device_id)
         records = [record async for record in cursor]
         return sorted(record["id"] for record in records if record["id"] != device_id)
+
+    async def topology(self, device_id: str, *, max_hops: int) -> dict[str, Any]:
+        async with self._driver.session() as session:
+            return await session.execute_read(self._read_topology, device_id, max_hops)
+
+    @staticmethod
+    async def _read_topology(tx, device_id: str, max_hops: int) -> dict[str, Any]:
+        # Same int()-guarded literal as _read_blast_radius, for the same reason.
+        node_query = (
+            "MATCH (d:Device {id: $device_id}) "
+            f"OPTIONAL MATCH (d)-[:ROUTES_TO*1..{int(max_hops)}]-(n) "
+            "WITH d, collect(DISTINCT n) AS others "
+            "UNWIND ([d] + others) AS node "
+            "RETURN elementId(node) AS eid, labels(node) AS labels, node.id AS id, "
+            "node.ip AS ip, node.hostname AS hostname, node.vendor AS vendor"
+        )
+        rows = [r async for r in await tx.run(node_query, device_id=device_id)]
+        nodes: list[dict[str, Any]] = []
+        public_ids: dict[str, str] = {}
+        for r in rows:
+            is_device = "Device" in r["labels"]
+            public_id = r["id"] if is_device else f"peer:{r['ip']}"
+            public_ids[r["eid"]] = public_id
+            nodes.append({
+                "id": public_id,
+                "kind": "device" if is_device else "unresolved",
+                "hostname": r["hostname"] if is_device else None,
+                "vendor": r["vendor"] if is_device else None,
+                "ip": None if is_device else r["ip"],
+            })
+        if not nodes:
+            return {"nodes": [], "edges": []}
+        edge_query = (
+            "MATCH (a)-[r:ROUTES_TO]->(b) "
+            "WHERE elementId(a) IN $eids AND elementId(b) IN $eids "
+            "RETURN elementId(a) AS s, elementId(b) AS t, r.protocol AS protocol"
+        )
+        edge_rows = [r async for r in await tx.run(edge_query, eids=list(public_ids))]
+        edges = [{"source": public_ids[r["s"]], "target": public_ids[r["t"]], "protocol": r["protocol"]} for r in edge_rows]
+        return {"nodes": nodes, "edges": edges}
 
 
 def build_topology_graph_provider() -> TopologyGraphProvider:

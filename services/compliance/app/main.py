@@ -10,9 +10,10 @@ side normally arrives as a Celery task — see app/worker.py.
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from app import db, opa_client
+from app import db, evaluator, opa_client
 from app.counterfactual import counterfactual
 from app.evaluator import evaluate_baseline, shutdown_graph_provider
+from app.fix_simulation import apply_fix
 from app.opa_client import OPAEvaluationError
 from app.reachability_diff import diff_acl
 from app.risk_scorer import fleet_score, summarize
@@ -142,6 +143,48 @@ async def get_trust_view(run_id: str):
     if data is None:
         raise HTTPException(status_code=404, detail=f"No audit run {run_id}")
     return build_trust_view(data["baseline_snapshot"], data["deterministic_baseline"], data["parser_agreement"])
+
+
+@app.get("/audit-runs/{run_id}/counterfactual/{control_id}")
+async def simulate_fix(run_id: str, control_id: str):
+    """docs/Suggestions.md item 3 for one finding: the run's stored baseline
+    vs the same baseline with `control_id` fixed (app/fix_simulation.py),
+    scored through the normal OPA path and diffed by app/counterfactual.py."""
+    data = await db.get_trust_data(run_id)
+    if data is None or not data["baseline_snapshot"]:
+        raise HTTPException(status_code=404, detail=f"No evaluated baseline for audit run {run_id}")
+    current = data["baseline_snapshot"]
+    proposed = apply_fix(current, control_id)
+    if proposed is None:
+        raise HTTPException(status_code=422, detail=f"No fix simulation is defined for {control_id}")
+    try:
+        current_findings = await opa_client.evaluate(current)
+        proposed_findings = await opa_client.evaluate(proposed)
+    except OPAEvaluationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    result = counterfactual(
+        current_findings, proposed_findings,
+        current.get("acl"), proposed.get("acl"), current.get("topology"), proposed.get("topology"),
+    )
+    return {"control_id": control_id, "simulated": True, **result}
+
+
+@app.get("/audit-runs/{run_id}/topology")
+async def get_topology(run_id: str):
+    """The routing neighborhood behind this run's blast_radius, as nodes and
+    edges for the UI graph. Empty (not an error) when Neo4j is off — the same
+    optional-enrichment contract as blast_radius itself."""
+    data = await db.get_trust_data(run_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"No audit run {run_id}")
+    device_id = ((data["baseline_snapshot"] or {}).get("device") or {}).get("config_sha256")
+    if not device_id:
+        return {"center": None, "nodes": [], "edges": []}
+    try:
+        graph = await evaluator._get_graph_provider().topology(device_id, max_hops=evaluator.GRAPH_BLAST_RADIUS_MAX_HOPS)
+    except Exception:
+        return {"center": device_id, "nodes": [], "edges": []}
+    return {"center": device_id, **graph}
 
 
 @app.post("/reachability-diff")

@@ -64,6 +64,21 @@ test_remediation_resolves_per_vendor_from_data_not_code if {
 	uf.remediation == null
 }
 
+test_juniper_and_paloalto_resolve_templates_from_data if {
+	bad := object.union(compliant, {"telnet": {"enabled": "ENABLED"}})
+
+	junos := level1.deny with input as object.union(bad, {"device": {"detected_vendor": "juniper"}})
+	panos := level1.deny with input as object.union(bad, {"device": {"detected_vendor": "paloalto"}})
+
+	some jf in junos
+	jf.control_id == "CIS-NET-1.1.2"
+	jf.remediation == "junos_disable_telnet.j2"
+
+	some pf in panos
+	pf.control_id == "CIS-NET-1.1.2"
+	pf.remediation == "paloalto_disable_telnet.j2"
+}
+
 # ── 1.1.1 SSH v2 (evidence-only) ─────────────────────────────────────
 test_ssh_v1_fails if {
 	bad := object.union(compliant, {"ssh": {"version": "1"}})

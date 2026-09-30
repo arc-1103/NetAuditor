@@ -1,0 +1,6 @@
+# CIS-JUNOS-1.7.1 - Disable unencrypted HTTP management access
+# REVIEW: confirm HTTPS management works before deleting HTTP
+configure
+delete system services web-management http
+commit check
+commit

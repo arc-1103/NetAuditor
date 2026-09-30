@@ -22,7 +22,7 @@ async def request(method, path, **kwargs):
 async def test_health_reports_loaded_templates():
     response = await request("GET", "/health")
     assert response.status_code == 200
-    assert response.json()["templates"] == 20
+    assert response.json()["templates"] == 30
 
 
 def test_slm_defaults_to_real_mode_not_mock():
@@ -234,6 +234,7 @@ async def test_approval_denied_by_the_role_matrix_is_403(monkeypatch):
 @pytest.mark.asyncio
 async def test_bulk_generation_uses_persisted_findings(monkeypatch):
     monkeypatch.setattr(main.db, "get_findings", AsyncMock(return_value=[{**FINDING, "blast_radius": []}]))
+    monkeypatch.setattr(main.db, "get_run_device", AsyncMock(return_value={"detected_vendor": "cisco"}))
     save = AsyncMock()
     monkeypatch.setattr(main.db, "save_proposal", save)
     monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
@@ -242,6 +243,37 @@ async def test_bulk_generation_uses_persisted_findings(monkeypatch):
     assert response.status_code == 200
     assert response.json()["generated"] == 1
     save.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_bulk_generation_falls_back_to_agentic_rag_for_untemplated_vendor(monkeypatch):
+    """Regression test: a vendor with no committed template (e.g. Juniper,
+    Palo Alto — remediation=None on the finding) must still produce a
+    proposal via the agentic RAG fallback, not be silently dropped and
+    surfaced as a blanket 404 "no remediable findings"."""
+    monkeypatch.setattr(main.db, "get_findings", AsyncMock(return_value=[{**NO_TEMPLATE_FINDING, "blast_radius": []}]))
+    monkeypatch.setattr(main.db, "get_run_device", AsyncMock(return_value={"detected_vendor": "juniper", "detected_os": "JunOS"}))
+    save = AsyncMock()
+    monkeypatch.setattr(main.db, "save_proposal", save)
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
+    monkeypatch.setattr(main, "_manual_provider", FakeManualProvider(excerpts=["do the thing"]))
+    monkeypatch.setattr(main, "_slm", FakeSLM())
+
+    response = await request("POST", f"/remediation/audit-runs/{RUN_ID}/generate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["generated"] == 1
+    assert body["remediations"][0]["source"] == "agentic_rag"
+    save.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_bulk_generation_404s_only_when_the_run_has_no_findings_at_all(monkeypatch):
+    monkeypatch.setattr(main.db, "get_findings", AsyncMock(return_value=[]))
+    response = await request("POST", f"/remediation/audit-runs/{RUN_ID}/generate")
+    assert response.status_code == 404
 
 
 # ── Agentic RAG fallback (no committed template) ─────────────────────

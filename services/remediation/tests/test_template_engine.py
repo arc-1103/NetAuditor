@@ -17,6 +17,10 @@ EXPECTED = {
     "fortinet_ike_encryption_fix.j2", "fortinet_ntp_auth_fix.j2",
     "fortinet_login_banner_fix.j2", "fortinet_disable_http_fix.j2",
     "fortinet_syslog_fix.j2",
+    "junos_ssh_v2_fix.j2", "junos_disable_telnet.j2", "junos_snmp_community_fix.j2",
+    "junos_login_banner_fix.j2", "junos_disable_http.j2", "junos_syslog_fix.j2",
+    "paloalto_disable_telnet.j2", "paloalto_login_banner_fix.j2",
+    "paloalto_disable_http.j2", "paloalto_syslog_fix.j2",
 }
 
 FORTINET_TEMPLATES = {
@@ -32,7 +36,17 @@ def test_all_compliance_templates_exist():
     assert set(template_engine.available_templates()) == EXPECTED
 
 
-@pytest.mark.parametrize("name", sorted(EXPECTED - FORTINET_TEMPLATES))
+NON_IOS_TEMPLATES = FORTINET_TEMPLATES | {n for n in EXPECTED if n.startswith(("junos_", "paloalto_"))}
+
+
+@pytest.mark.parametrize("name", sorted(n for n in EXPECTED if n.startswith(("junos_", "paloalto_"))))
+def test_every_junos_and_paloalto_template_renders_with_defaults(name):
+    script = template_engine.render_template(name)
+    assert "REVIEW" in script and script.strip().splitlines()[-1] == "commit"
+    assert script.endswith("\n")
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED - NON_IOS_TEMPLATES))
 def test_every_ios_template_renders_a_nonempty_script(name):
     script = template_engine.render_template(name)
     assert "configure terminal" in script

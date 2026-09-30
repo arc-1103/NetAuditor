@@ -13,6 +13,23 @@ export interface Finding {
   blast_radius?: string[];
 }
 
+export interface FixSimulation {
+  control_id: string;
+  current: { compliance_score: number };
+  proposed: { compliance_score: number };
+  compliance_delta: number;
+  violations_resolved: string[];
+  violations_introduced: string[];
+  risk: "LOW" | "MEDIUM" | "HIGH";
+  verdict: "SAFE" | "RISK_FLAG";
+}
+
+export interface TopologyGraph {
+  center: string | null;
+  nodes: Array<{ id: string; kind: "device" | "unresolved"; hostname?: string | null; vendor?: string | null; ip?: string | null }>;
+  edges: Array<{ source: string; target: string; protocol?: string | null }>;
+}
+
 export interface Summary {
   total_findings: number;
   by_severity: Record<Severity, number>;

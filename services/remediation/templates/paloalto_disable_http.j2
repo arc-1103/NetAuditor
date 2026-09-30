@@ -1,0 +1,5 @@
+# CIS-PANOS-1.7.1 - Disable unencrypted HTTP management access
+# REVIEW: confirm HTTPS management works before committing
+configure
+set deviceconfig system service disable-http yes
+commit

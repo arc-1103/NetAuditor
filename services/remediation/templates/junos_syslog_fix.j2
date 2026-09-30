@@ -1,0 +1,6 @@
+# CIS-JUNOS-1.8.1 - Send logs to a remote syslog host
+# REVIEW: confirm the collector address before deployment
+configure
+set system syslog host {{ syslog_host | default('10.0.0.10') }} any info
+commit check
+commit

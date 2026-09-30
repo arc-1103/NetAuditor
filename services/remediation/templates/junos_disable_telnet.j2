@@ -1,0 +1,6 @@
+# CIS-JUNOS-1.1.2 - Disable Telnet administrative access
+# REVIEW: confirm SSH access works before deleting Telnet
+configure
+delete system services telnet
+commit check
+commit

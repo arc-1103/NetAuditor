@@ -31,7 +31,7 @@ class SLMError(RuntimeError):
 
 
 class OllamaSLMClient:
-    def __init__(self, host: str, model: str, *, timeout_seconds: float = 60.0, mock: bool = False):
+    def __init__(self, host: str, model: str, *, timeout_seconds: float = 240.0, mock: bool = False):
         self.host = host.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds

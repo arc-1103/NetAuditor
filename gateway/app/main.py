@@ -206,6 +206,24 @@ async def get_trust_view(run_id: str, user=Depends(require_reader)):
         raise upstream_error(resp)
     return resp.json()
 
+@app.get("/api/audit-runs/{run_id}/counterfactual/{control_id}")
+async def simulate_fix(run_id: str, control_id: str, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/audit-runs/{run_id}/counterfactual/{control_id}")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/audit-runs/{run_id}/topology")
+async def get_topology(run_id: str, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/audit-runs/{run_id}/topology")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
 @app.post("/api/reports/generate")
 async def generate_report(body: ReportGenerateRequest, user=Depends(require_reader)):
     # Blueprint §3.1: Admin->>GW: POST /api/reports/generate (audit_run_id)

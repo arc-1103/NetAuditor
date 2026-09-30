@@ -1,0 +1,6 @@
+# CIS-JUNOS-1.2.2 - Remove a default SNMP community string
+# REVIEW: confirm {{ community | default('public') }} is the community to remove and nothing polls it
+configure
+delete snmp community {{ community | default('public') }}
+commit check
+commit

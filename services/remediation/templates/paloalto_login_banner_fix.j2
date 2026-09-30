@@ -1,0 +1,5 @@
+# CIS-PANOS-1.6.1 - Configure an authorized-use warning
+# REVIEW: confirm the banner text with your legal team before committing
+configure
+set deviceconfig system login-banner "{{ login_banner | default('Authorized access only. Activity may be monitored and reported.') }}"
+commit

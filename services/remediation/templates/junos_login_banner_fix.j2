@@ -1,0 +1,6 @@
+# CIS-JUNOS-1.6.1 - Configure an authorized-use warning
+# REVIEW: confirm the banner text with your legal team before deployment
+configure
+set system login message "{{ login_banner | default('Authorized access only. Activity may be monitored and reported.') }}"
+commit check
+commit

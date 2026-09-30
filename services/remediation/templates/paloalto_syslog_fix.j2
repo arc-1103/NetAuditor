@@ -1,0 +1,5 @@
+# CIS-PANOS-1.8.1 - Send logs to a remote syslog server
+# REVIEW: confirm the collector address and attach the profile to a log forwarding profile before relying on it
+configure
+set shared log-settings syslog {{ syslog_profile | default('netaudit-syslog') }} server {{ syslog_profile | default('netaudit-syslog') }} server {{ syslog_host | default('10.0.0.10') }} transport UDP port 514 format BSD facility LOG_USER
+commit

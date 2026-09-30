@@ -38,17 +38,17 @@
 package compliance.cis.generic.level1
 
 remediation_templates := {
-	"CIS-NET-1.1.1": {"cisco": "ios_ssh_v2_fix.j2"},
-	"CIS-NET-1.1.2": {"cisco": "ios_disable_telnet.j2", "fortinet": "fortinet_disable_telnet.j2"},
+	"CIS-NET-1.1.1": {"cisco": "ios_ssh_v2_fix.j2", "juniper": "junos_ssh_v2_fix.j2"},
+	"CIS-NET-1.1.2": {"cisco": "ios_disable_telnet.j2", "fortinet": "fortinet_disable_telnet.j2", "juniper": "junos_disable_telnet.j2", "paloalto": "paloalto_disable_telnet.j2"},
 	"CIS-NET-1.1.3": {"cisco": "ios_ssh_mgmt_acl_fix.j2", "fortinet": "fortinet_ssh_mgmt_acl_fix.j2"},
 	"CIS-NET-1.2.1": {"cisco": "ios_snmp_v3_fix.j2", "fortinet": "fortinet_snmp_v3_fix.j2"},
-	"CIS-NET-1.2.2": {"cisco": "ios_snmp_community_fix.j2", "fortinet": "fortinet_snmp_community_fix.j2"},
+	"CIS-NET-1.2.2": {"cisco": "ios_snmp_community_fix.j2", "fortinet": "fortinet_snmp_community_fix.j2", "juniper": "junos_snmp_community_fix.j2"},
 	"CIS-NET-1.3.1": {"cisco": "ios_ike_encryption_fix.j2", "fortinet": "fortinet_ike_encryption_fix.j2"},
 	"CIS-NET-1.4.1": {"cisco": "ios_ntp_auth_fix.j2", "fortinet": "fortinet_ntp_auth_fix.j2"},
 	"CIS-NET-1.5.1": {"cisco": "ios_password_encryption_fix.j2"},
-	"CIS-NET-1.6.1": {"cisco": "ios_login_banner_fix.j2", "fortinet": "fortinet_login_banner_fix.j2"},
-	"CIS-NET-1.7.1": {"cisco": "ios_disable_http_server.j2", "fortinet": "fortinet_disable_http_fix.j2"},
-	"CIS-NET-1.8.1": {"cisco": "ios_syslog_fix.j2", "fortinet": "fortinet_syslog_fix.j2"},
+	"CIS-NET-1.6.1": {"cisco": "ios_login_banner_fix.j2", "fortinet": "fortinet_login_banner_fix.j2", "juniper": "junos_login_banner_fix.j2", "paloalto": "paloalto_login_banner_fix.j2"},
+	"CIS-NET-1.7.1": {"cisco": "ios_disable_http_server.j2", "fortinet": "fortinet_disable_http_fix.j2", "juniper": "junos_disable_http.j2", "paloalto": "paloalto_disable_http.j2"},
+	"CIS-NET-1.8.1": {"cisco": "ios_syslog_fix.j2", "fortinet": "fortinet_syslog_fix.j2", "juniper": "junos_syslog_fix.j2", "paloalto": "paloalto_syslog_fix.j2"},
 }
 
 remediation_for(control_id) := object.get(

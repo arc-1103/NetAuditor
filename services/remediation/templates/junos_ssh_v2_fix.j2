@@ -1,0 +1,6 @@
+# CIS-JUNOS-1.1.1 - Require SSH version 2
+# REVIEW: confirm no legacy automation depends on SSH v1 before deployment
+configure
+set system services ssh protocol-version v2
+commit check
+commit

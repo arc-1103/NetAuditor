@@ -276,16 +276,34 @@ async def get_proposals(audit_run_id: str) -> list[dict]:
 
 
 async def get_findings(audit_run_id: str) -> list[dict]:
+    """Every finding for this run, including ones with remediation=null —
+    app/models.py's Finding.remediation docstring: null means "no template
+    for this vendor yet", which app/main.py's _build_proposal routes to the
+    agentic RAG fallback rather than dropping. Filtering those out here
+    would silently withhold a proposal the single-finding endpoint would
+    have produced."""
     async with async_session() as session:
         rows = (await session.execute(
             text("""
                 SELECT control_id, framework, title, severity, evidence, remediation, blast_radius
                 FROM compliance_findings
-                WHERE audit_run_id=:run_id AND remediation IS NOT NULL
+                WHERE audit_run_id=:run_id
                 ORDER BY control_id
             """), {"run_id": audit_run_id}
         )).mappings().all()
     return [_jsonable(row) for row in rows]
+
+
+async def get_run_device(audit_run_id: str) -> dict:
+    """detected_vendor/detected_os for _build_proposal's agentic RAG
+    fallback path — the bulk generate-for-run endpoint has no per-finding
+    device payload the way POST /remediation/generate does."""
+    async with async_session() as session:
+        row = (await session.execute(
+            text("SELECT detected_vendor, detected_os FROM audit_runs WHERE id=:run_id"),
+            {"run_id": audit_run_id},
+        )).mappings().first()
+    return dict(row) if row else {}
 
 
 async def get_run_parsing_confidence(audit_run_id: str) -> float | None:

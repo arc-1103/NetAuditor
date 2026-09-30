@@ -1,0 +1,5 @@
+# CIS-PANOS-1.1.2 - Disable Telnet administrative access
+# REVIEW: confirm SSH/HTTPS management access works before committing
+configure
+set deviceconfig system service disable-telnet yes
+commit
