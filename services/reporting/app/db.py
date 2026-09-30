@@ -123,6 +123,8 @@ async def get_ledger_events(event_types: tuple[str, ...]) -> list[dict]:
         )).mappings().all()
     events = [dict(r) for r in rows]
     for event in events:
+        # asyncpg returns UUID objects; findings_by_run is keyed by str.
+        event["audit_run_id"] = str(event["audit_run_id"])
         if isinstance(event.get("payload"), str):
             event["payload"] = json.loads(event["payload"])
     return events

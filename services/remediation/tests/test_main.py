@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app import main
+from app.slm_client import SLMError
 
 RUN_ID = "11111111-1111-1111-1111-111111111111"
 FINDING = {
@@ -446,3 +447,47 @@ async def test_rollback_of_a_never_applied_proposal_is_conflict(monkeypatch):
         json={"audit_run_id": RUN_ID, "reason": "changed my mind"},
     )
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_bulk_generation_falls_back_to_agentic_rag_for_untemplated_findings(monkeypatch):
+    monkeypatch.setattr(main.db, "get_findings", AsyncMock(return_value=[{**NO_TEMPLATE_FINDING, "blast_radius": []}]))
+    monkeypatch.setattr(main.db, "get_run_device", AsyncMock(return_value={"detected_vendor": "arista", "detected_os": "EOS"}))
+    save = AsyncMock()
+    monkeypatch.setattr(main.db, "save_proposal", save)
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
+    monkeypatch.setattr(main, "_manual_provider", FakeManualProvider())
+    monkeypatch.setattr(main, "_slm", FakeSLM())
+
+    response = await request("POST", f"/remediation/audit-runs/{RUN_ID}/generate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["generated"] == 1 and body["skipped"] == []
+    assert body["remediations"][0]["source"] == "agentic_rag"
+    save.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_bulk_generation_fails_loudly_when_no_fallback_can_produce_anything(monkeypatch):
+    monkeypatch.setattr(main.db, "get_findings", AsyncMock(return_value=[{**NO_TEMPLATE_FINDING, "blast_radius": []}]))
+    monkeypatch.setattr(main.db, "get_run_device", AsyncMock(return_value={"detected_vendor": "arista"}))
+    save = AsyncMock()
+    monkeypatch.setattr(main.db, "save_proposal", save)
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
+    monkeypatch.setattr(main, "_manual_provider", FakeManualProvider())
+
+    class DownSLM:
+        async def synthesize(self, prompt):
+            raise SLMError("model not found")
+
+    monkeypatch.setattr(main, "_slm", DownSLM())
+
+    response = await request("POST", f"/remediation/audit-runs/{RUN_ID}/generate")
+
+    assert response.status_code == 502
+    assert "model not found" in response.json()["detail"]
+    save.assert_not_awaited()
+

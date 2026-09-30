@@ -161,20 +161,31 @@ async def list_for_run(audit_run_id: str):
 
 @app.post("/remediation/audit-runs/{audit_run_id}/generate")
 async def generate_for_run(audit_run_id: str):
-    """Build a proposal for every compliance finding on this run, via the
-    same _build_proposal path POST /remediation/generate uses — so a
-    finding whose vendor has no committed template still gets the agentic
-    RAG fallback instead of being silently dropped (see get_findings)."""
+    """Build a proposal for every finding of this run: the deterministic
+    template when one exists, else the agentic RAG fallback (same
+    _build_proposal as POST /remediation/generate). A template failure
+    aborts the request; a failed fallback only skips that finding — unless
+    nothing at all could be generated, then its error is what's raised."""
     findings = await db.get_findings(audit_run_id)
     if not findings:
-        raise HTTPException(status_code=404, detail="No compliance findings to remediate for this audit run")
+        raise HTTPException(status_code=404, detail="No findings found for this audit run")
     device = await db.get_run_device(audit_run_id)
-    proposals = []
+    proposals, skipped = [], []
+    last_error: HTTPException | None = None
     for finding in findings:
-        proposal = await _build_proposal(audit_run_id, Finding(**finding), device, {})
+        try:
+            proposal = await _build_proposal(audit_run_id, Finding(**finding), device, {})
+        except HTTPException as exc:
+            if finding["remediation"] is not None:
+                raise
+            last_error = exc
+            skipped.append({"control_id": finding["control_id"], "reason": exc.detail})
+            continue
         await db.save_proposal(proposal.model_dump())
         proposals.append(proposal)
-    return {"audit_run_id": audit_run_id, "generated": len(proposals), "remediations": proposals}
+    if not proposals and last_error:
+        raise last_error
+    return {"audit_run_id": audit_run_id, "generated": len(proposals), "remediations": proposals, "skipped": skipped}
 
 
 @app.post("/remediation/{control_id}/approve")

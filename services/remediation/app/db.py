@@ -276,12 +276,6 @@ async def get_proposals(audit_run_id: str) -> list[dict]:
 
 
 async def get_findings(audit_run_id: str) -> list[dict]:
-    """Every finding for this run, including ones with remediation=null —
-    app/models.py's Finding.remediation docstring: null means "no template
-    for this vendor yet", which app/main.py's _build_proposal routes to the
-    agentic RAG fallback rather than dropping. Filtering those out here
-    would silently withhold a proposal the single-finding endpoint would
-    have produced."""
     async with async_session() as session:
         rows = (await session.execute(
             text("""
@@ -295,9 +289,8 @@ async def get_findings(audit_run_id: str) -> list[dict]:
 
 
 async def get_run_device(audit_run_id: str) -> dict:
-    """detected_vendor/detected_os for _build_proposal's agentic RAG
-    fallback path — the bulk generate-for-run endpoint has no per-finding
-    device payload the way POST /remediation/generate does."""
+    """Vendor/OS the compliance run detected — what the agentic-RAG fallback
+    needs to look up vendor manuals for a finding with no .j2 template."""
     async with async_session() as session:
         row = (await session.execute(
             text("SELECT detected_vendor, detected_os FROM audit_runs WHERE id=:run_id"),
