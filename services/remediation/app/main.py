@@ -7,7 +7,7 @@ from app import db, decision, webhooks
 from app.approval_matrix import ApprovalDenied
 from app.batfish_client import preflight
 from app.manual_provider import EmptyRemediationManualProvider, LearningRemediationManualProvider, RemediationManualProvider
-from app.models import ApprovalRequest, Decision, GenerateRequest, PreflightResult, RemediationProposal
+from app.models import ApprovalRequest, Decision, Finding, GenerateRequest, PreflightResult, RemediationProposal
 from app.rag_remediation import RemediationSynthesisError, synthesize_remediation
 from app.slm_client import OllamaSLMClient
 from app.template_engine import RemediationTemplateError, available_templates, render_template
@@ -161,33 +161,31 @@ async def list_for_run(audit_run_id: str):
 
 @app.post("/remediation/audit-runs/{audit_run_id}/generate")
 async def generate_for_run(audit_run_id: str):
-    """Render every remediation named by this run's compliance findings."""
+    """Build a proposal for every finding of this run: the deterministic
+    template when one exists, else the agentic RAG fallback (same
+    _build_proposal as POST /remediation/generate). A template failure
+    aborts the request; a failed fallback only skips that finding — unless
+    nothing at all could be generated, then its error is what's raised."""
     findings = await db.get_findings(audit_run_id)
     if not findings:
-        raise HTTPException(status_code=404, detail="No remediable findings found for this audit run")
-    parser_agreement = await _resolve_parser_agreement(audit_run_id)
-    proposals = []
+        raise HTTPException(status_code=404, detail="No findings found for this audit run")
+    device = await db.get_run_device(audit_run_id)
+    proposals, skipped = [], []
+    last_error: HTTPException | None = None
     for finding in findings:
         try:
-            script = render_template(finding["remediation"])
-        except RemediationTemplateError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        decision_result = Decision(**decision.decide(
-            parser_agreement=parser_agreement,
-            blast_radius=decision.blast_radius_count(finding.get("blast_radius")),
-            severity=finding["severity"],
-        ))
-        proposal = RemediationProposal(
-            audit_run_id=audit_run_id,
-            control_id=finding["control_id"],
-            template_name=finding["remediation"],
-            script=script,
-            preflight=await preflight(script),
-            decision=decision_result,
-        )
+            proposal = await _build_proposal(audit_run_id, Finding(**finding), device, {})
+        except HTTPException as exc:
+            if finding["remediation"] is not None:
+                raise
+            last_error = exc
+            skipped.append({"control_id": finding["control_id"], "reason": exc.detail})
+            continue
         await db.save_proposal(proposal.model_dump())
         proposals.append(proposal)
-    return {"audit_run_id": audit_run_id, "generated": len(proposals), "remediations": proposals}
+    if not proposals and last_error:
+        raise last_error
+    return {"audit_run_id": audit_run_id, "generated": len(proposals), "remediations": proposals, "skipped": skipped}
 
 
 @app.post("/remediation/{control_id}/approve")

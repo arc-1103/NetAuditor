@@ -281,11 +281,22 @@ async def get_findings(audit_run_id: str) -> list[dict]:
             text("""
                 SELECT control_id, framework, title, severity, evidence, remediation, blast_radius
                 FROM compliance_findings
-                WHERE audit_run_id=:run_id AND remediation IS NOT NULL
+                WHERE audit_run_id=:run_id
                 ORDER BY control_id
             """), {"run_id": audit_run_id}
         )).mappings().all()
     return [_jsonable(row) for row in rows]
+
+
+async def get_run_device(audit_run_id: str) -> dict:
+    """Vendor/OS the compliance run detected — what the agentic-RAG fallback
+    needs to look up vendor manuals for a finding with no .j2 template."""
+    async with async_session() as session:
+        row = (await session.execute(
+            text("SELECT detected_vendor, detected_os FROM audit_runs WHERE id=:run_id"),
+            {"run_id": audit_run_id},
+        )).mappings().first()
+    return dict(row) if row else {}
 
 
 async def get_run_parsing_confidence(audit_run_id: str) -> float | None:
