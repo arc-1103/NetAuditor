@@ -10,4 +10,13 @@ line vty 0 15
  transport input ssh
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+! REVIEW: restore the original VTY transport setting from the pre-change backup
+line vty 0 15
+ no access-class {{ management_acl | default('NETAUDIT-MGMT') }} in
+exit
+no ip access-list standard {{ management_acl | default('NETAUDIT-MGMT') }}
+end
+write memory

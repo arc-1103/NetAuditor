@@ -86,3 +86,17 @@ def test_environment_is_sandboxed_against_ssti_attribute_chain_attacks():
     with pytest.raises(SecurityError):
         _environment().from_string(malicious).render()
 
+
+
+def test_every_template_has_a_rollback_and_the_fix_never_contains_the_marker():
+    for name in template_engine.available_templates():
+        assert template_engine.ROLLBACK_MARKER not in template_engine.render_template(name)
+        rollback = template_engine.render_rollback(name)
+        assert rollback and "Rollback" in rollback and rollback.endswith("\n"), name
+
+
+def test_rollback_is_the_inverse_not_the_fix():
+    assert "no ip http server" in template_engine.render_template("ios_disable_http_server.j2")
+    rollback = template_engine.render_rollback("ios_disable_http_server.j2")
+    assert "no ip http server" not in rollback and "ip http server" in rollback
+    assert "rollback 1" in template_engine.render_rollback("junos_disable_telnet.j2")

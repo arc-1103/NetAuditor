@@ -178,6 +178,8 @@ CREATE TABLE IF NOT EXISTS remediation_proposals (
     applied_at         TIMESTAMPTZ,
     rollback_status    TEXT NOT NULL DEFAULT 'NONE'
         CHECK (rollback_status IN ('NONE', 'APPLIED', 'VERIFICATION_FAILED', 'ROLLED_BACK')),
+    -- Digital-twin reachability result (services/remediation/app/twin.py).
+    twin               JSONB,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (audit_run_id, control_id),
@@ -207,7 +209,8 @@ CREATE TABLE IF NOT EXISTS ledger_events (
     event_type      TEXT NOT NULL CHECK (event_type IN (
         'VIOLATION_DETECTED', 'REMEDIATION_PROPOSED', 'DECISION_MADE',
         'APPROVED', 'REJECTED', 'APPLIED', 'VERIFICATION_FAILED',
-        'ROLLED_BACK', 'REPORT_GENERATED'
+        'ROLLED_BACK', 'REPORT_GENERATED',
+        'WAIVER_GRANTED', 'WAIVER_REVOKED'
     )),
     actor           TEXT NOT NULL DEFAULT 'system',
     ruleset_version TEXT,
@@ -219,3 +222,30 @@ CREATE INDEX IF NOT EXISTS idx_ledger_events_run
     ON ledger_events (audit_run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_ledger_events_run_control
     ON ledger_events (audit_run_id, control_id, event_type, created_at);
+
+-- Tamper-evident sealing of ledger_events (services/compliance/app/ledger_seal.py):
+-- each seal commits a Merkle root over a batch of events, is Ed25519-signed, and
+-- is chained to the previous seal. Seals are append-only; any edit or delete is
+-- refused here and, if bypassed, caught by GET /ledger/verify.
+CREATE TABLE IF NOT EXISTS ledger_seals (
+    seq            INTEGER PRIMARY KEY,
+    merkle_root    TEXT NOT NULL,
+    prev_seal_hash TEXT NOT NULL,
+    event_count    INTEGER NOT NULL,
+    sealed_at      TEXT NOT NULL,
+    signature      TEXT NOT NULL,
+    key_id         TEXT NOT NULL,
+    event_ids      JSONB NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION ledger_seals_immutable() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'ledger_seals is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS ledger_seals_no_change ON ledger_seals;
+CREATE TRIGGER ledger_seals_no_change
+    BEFORE UPDATE OR DELETE ON ledger_seals
+    FOR EACH ROW EXECUTE FUNCTION ledger_seals_immutable();
+

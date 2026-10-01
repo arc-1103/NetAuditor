@@ -5,3 +5,11 @@ config system interface
         set allowaccess https ssh ping
     next
 end
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+! REVIEW: restore the interface's original allowaccess list from the pre-change backup
+config system interface
+    edit "{{ interface | default('mgmt') }}"
+        set allowaccess https ssh telnet ping
+    next
+end

@@ -5,6 +5,8 @@ statements are plain SQL, not Postgres-specific, apart from `now()` which
 SQLite also provides via a user function below.
 """
 
+import json
+
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -437,3 +439,47 @@ async def test_save_anomaly_defaults_missing_fields_to_none(sqlite_session):
     assert run["anomaly"]["status"] == "insufficient_peers"
     assert run["anomaly"]["is_anomaly"] is None
     assert run["anomaly"]["anomaly_score"] is None
+
+
+async def _add_run(session, run_id, created, status="EVALUATED", vendor="cisco", hostname="edge-rtr", controls=()):
+    snapshot = json.dumps({"device": {"raw_hostname": hostname}})
+    await session.execute(
+        text("INSERT INTO audit_runs (id, file_hash, original_filename, storage_path, status, detected_vendor, baseline_snapshot, created_at) "
+             "VALUES (:id, :h, :f, 'p', :status, :vendor, :snap, :created)"),
+        {"id": run_id, "h": run_id * 2, "f": f"{run_id}.cfg", "status": status, "vendor": vendor, "snap": snapshot, "created": created},
+    )
+    for control in controls:
+        await session.execute(
+            text("INSERT INTO compliance_findings (audit_run_id, control_id, framework, title, status, severity) "
+                 "VALUES (:r, :c, 'CIS', :c, 'FAIL', 'HIGH')"),
+            {"r": run_id, "c": control},
+        )
+
+
+async def test_get_device_runs_returns_only_the_same_device_oldest_first(sqlite_session):
+    async with sqlite_session() as session:
+        await _add_run(session, "a1", "2026-09-01", controls=["CIS-NET-1.1.2"])
+        await _add_run(session, "a2", "2026-09-05", controls=["CIS-NET-1.1.2", "CIS-NET-1.8.1"])
+        await _add_run(session, "b1", "2026-09-03", hostname="other-rtr", controls=["CIS-NET-1.6.1"])
+        await _add_run(session, "a3", "2026-09-07", status="NEEDS_REVIEW")
+        await session.commit()
+
+    runs = await db.get_device_runs("a2")
+
+    assert [r["run_id"] for r in runs] == ["a1", "a2"]
+    assert [f["control_id"] for f in runs[1]["findings"]] == ["CIS-NET-1.1.2", "CIS-NET-1.8.1"] or len(runs[1]["findings"]) == 2
+
+
+async def test_device_risk_uses_the_newest_evaluated_audit_of_each_config_hash(sqlite_session):
+    async with sqlite_session() as session:
+        await _add_run(session, "old", "2026-09-01", controls=["CIS-NET-1.1.2", "CIS-NET-1.2.2"])
+        await _add_run(session, "new", "2026-09-05", controls=["CIS-NET-1.6.1"])
+        await _add_run(session, "pend", "2026-09-06", status="NEEDS_REVIEW", hostname="other")
+        await session.execute(text("UPDATE audit_runs SET file_hash='same-device' WHERE id IN ('old','new')"))
+        await session.commit()
+
+    risk = await db.get_device_risk_by_hash()
+
+    assert set(risk) == {"same-device"}
+    assert risk["same-device"]["audit_run_id"] == "new" and risk["same-device"]["total_findings"] == 1
+    assert risk["same-device"]["critical"] == 0 and 0 <= risk["same-device"]["compliance_score"] <= 100

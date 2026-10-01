@@ -7,3 +7,6 @@ jinja2==3.1.4
 sqlalchemy[asyncio]==2.0.35
 asyncpg==0.29.0
 pyyaml==6.0.3
+
+# Formal verification of ACLs (app/formal.py). Without it the digital twin falls back to sample-packet checks.
+z3-solver==5.1.0.0

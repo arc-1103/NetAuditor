@@ -7,4 +7,13 @@ crypto isakmp policy {{ ike_policy_id | default(10) }}
  group 14
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+! REVIEW: restore the original policy values from the pre-change backup; these are common legacy defaults
+crypto isakmp policy {{ ike_policy_id | default(10) }}
+ encryption 3des
+ hash sha
+ group 2
+end
+write memory

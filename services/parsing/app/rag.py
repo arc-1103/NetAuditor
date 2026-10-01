@@ -6,6 +6,9 @@ from typing import Protocol
 
 import httpx
 
+from app import service_token
+from app.input_guard import _INJECTION
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +85,7 @@ class LearningRAGContextProvider:
 
     async def retrieve(self, vendor: str, os_name: str | None, config_text: str) -> str:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds, headers=service_token.auth_headers("parsing", "svc:parsing", "service_worker")) as client:
                 response = await client.post(
                     f"{self.base_url}/learning/search",
                     json={"query": config_text, "vendor": vendor, "os": os_name},
@@ -101,12 +104,13 @@ class LearningRAGContextProvider:
         metadatas = (results.get("metadatas") or [[]])[0]
 
         trusted = []
-        # chromadb returns matches sorted by ascending distance, so the first
-        # one past the ambiguous band means every match after it is farther
-        # still — nothing later can qualify either.
+        # Trust is decided on each match's own cosine distance, not its rank.
         for document, distance, metadata in zip(documents, distances, metadatas):
             if distance > self.ambiguous_max_distance:
-                break
+                continue
+            if _INJECTION.search(document or ""):
+                logger.warning("Dropped a retrieved RAG document containing prompt-injection text")
+                continue  # hybrid retrieval re-ranks, so a farther match may precede a nearer one
             if distance <= self.correct_max_distance or self._pattern_confirmed(metadata, config_text):
                 trusted.append(document)
             if len(trusted) >= self.top_k:

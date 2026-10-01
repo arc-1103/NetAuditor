@@ -8,6 +8,8 @@ Postgres instance.
 """
 
 import json
+
+from app import waivers as waivers_module
 import hashlib
 import os
 from datetime import datetime, timezone
@@ -268,6 +270,159 @@ async def get_trust_data(audit_run_id: str) -> dict | None:
     return value
 
 
+async def get_ledger_events() -> list[dict]:
+    """Every ledger event, oldest first, in the exact form app/ledger_seal.py
+    hashes (strings for ids/timestamps, payload as an object)."""
+    async with async_session() as session:
+        rows = (await session.execute(text(
+            "SELECT id, audit_run_id, control_id, event_type, actor, ruleset_version, payload, created_at "
+            "FROM ledger_events ORDER BY created_at, id"
+        ))).mappings().all()
+    events = []
+    for row in rows:
+        event = dict(row)
+        for field in ("id", "audit_run_id", "created_at"):
+            event[field] = str(event[field])
+        if isinstance(event.get("payload"), str):
+            event["payload"] = json.loads(event["payload"])
+        events.append(event)
+    return events
+
+
+async def get_ledger_seals() -> list[dict]:
+    async with async_session() as session:
+        rows = (await session.execute(text(
+            "SELECT seq, merkle_root, prev_seal_hash, event_count, sealed_at, signature, key_id, event_ids "
+            "FROM ledger_seals ORDER BY seq"
+        ))).mappings().all()
+    seals = []
+    for row in rows:
+        seal = dict(row)
+        if isinstance(seal["event_ids"], str):
+            seal["event_ids"] = json.loads(seal["event_ids"])
+        seals.append(seal)
+    return seals
+
+
+async def insert_ledger_seal(seal: dict) -> None:
+    """Primary-key on seq makes two concurrent sealers collide instead of forking the chain."""
+    async with async_session() as session, session.begin():
+        await session.execute(
+            text("INSERT INTO ledger_seals (seq, merkle_root, prev_seal_hash, event_count, sealed_at, signature, key_id, event_ids) "
+                 "VALUES (:seq, :merkle_root, :prev_seal_hash, :event_count, :sealed_at, :signature, :key_id, :event_ids)"),
+            {**seal, "event_ids": json.dumps(seal["event_ids"])},
+        )
+
+
+async def get_waiver_events() -> list[dict]:
+    """Waiver grants and revocations from the ledger, oldest first."""
+    async with async_session() as session:
+        rows = (await session.execute(text(
+            "SELECT id, audit_run_id, control_id, event_type, actor, payload, created_at FROM ledger_events "
+            "WHERE event_type IN ('WAIVER_GRANTED', 'WAIVER_REVOKED') ORDER BY created_at, id"))).mappings().all()
+    events = []
+    for row in rows:
+        event = dict(row)
+        for field in ("id", "audit_run_id", "created_at"):
+            event[field] = str(event[field])
+        if isinstance(event.get("payload"), str):
+            event["payload"] = json.loads(event["payload"])
+        events.append(event)
+    return events
+
+
+async def insert_waiver_event(event_id: str, audit_run_id: str, control_id: str, event_type: str, actor: str, payload: dict) -> None:
+    """Append-only, like every ledger write: a waiver is never edited, only superseded or revoked."""
+    async with async_session() as session, session.begin():
+        await session.execute(
+            text("INSERT INTO ledger_events (id, audit_run_id, control_id, event_type, actor, ruleset_version, payload) "
+                 "VALUES (:id, :run, :control, :type, :actor, :version, :payload)"),
+            {"id": event_id, "run": audit_run_id, "control": control_id, "type": event_type, "actor": actor,
+             "version": POLICY_BUNDLE_VERSION, "payload": json.dumps(payload)},
+        )
+
+
+async def get_device_risk_by_hash() -> dict[str, dict]:
+    """{config hash: latest evaluated run's score/findings}. A topology Device node is
+    keyed by config_sha256, which is the audit run's file_hash."""
+    from app.risk_scorer import summarize
+    async with async_session() as session:
+        runs = (await session.execute(text(
+            "SELECT id, file_hash, original_filename, created_at FROM audit_runs "
+            "WHERE status IN (:evaluated, 'COMPLETE') ORDER BY created_at"), {"evaluated": STATUS_EVALUATED})).mappings().all()
+        findings = (await session.execute(text("SELECT audit_run_id, control_id, severity, title FROM compliance_findings"))).mappings().all()
+    by_run: dict[str, list[dict]] = {}
+    for row in findings:
+        by_run.setdefault(str(row["audit_run_id"]), []).append(dict(row))
+    latest: dict[str, dict] = {}
+    for run in runs:  # oldest first, so the newest audit of a file wins
+        run_findings = by_run.get(str(run["id"]), [])
+        summary = summarize(run_findings)
+        latest[run["file_hash"]] = {
+            "audit_run_id": str(run["id"]), "filename": run["original_filename"],
+            "compliance_score": summary["compliance_score"], "total_findings": summary["total_findings"],
+            "critical": summary["by_severity"].get("CRITICAL", 0),
+        }
+    return latest
+
+
+async def get_device_runs(audit_run_id: str, limit: int = 200) -> list[dict]:
+    """Every evaluated run of the same device as `audit_run_id` (same vendor
+    and raw_hostname in the stored baseline), oldest first, each with its
+    findings — the input to app/drift.py. Filtering by hostname happens in
+    Python because the JSON operators differ between Postgres and SQLite."""
+    async with async_session() as session:
+        anchor = (await session.execute(
+            text("SELECT detected_vendor, baseline_snapshot FROM audit_runs WHERE id=:run_id"),
+            {"run_id": audit_run_id},
+        )).mappings().first()
+        if anchor is None:
+            return []
+        candidates = (await session.execute(
+            text("SELECT id, created_at, original_filename, detected_vendor, baseline_snapshot FROM audit_runs "
+                 "WHERE status IN (:evaluated, 'COMPLETE') ORDER BY created_at LIMIT :limit"),
+            {"evaluated": STATUS_EVALUATED, "limit": limit},
+        )).mappings().all()
+
+        def identity(vendor, snapshot):
+            if isinstance(snapshot, str):
+                snapshot = json.loads(snapshot)
+            hostname = ((snapshot or {}).get("device") or {}).get("raw_hostname")
+            return (vendor or "").lower(), (hostname or "").lower()
+
+        target = identity(anchor["detected_vendor"], anchor["baseline_snapshot"])
+        if not target[1]:
+            same = [r for r in candidates if str(r["id"]) == audit_run_id]
+        else:
+            same = [r for r in candidates if identity(r["detected_vendor"], r["baseline_snapshot"]) == target]
+        ids = [str(r["id"]) for r in same]
+        findings_by_run: dict[str, list[dict]] = {run_id: [] for run_id in ids}
+        if ids:
+            rows = (await session.execute(
+                text("SELECT audit_run_id, control_id, severity, title FROM compliance_findings "
+                     "WHERE audit_run_id IN :ids").bindparams(bindparam("ids", expanding=True)),
+                {"ids": ids},
+            )).mappings().all()
+            for row in rows:
+                findings_by_run[str(row["audit_run_id"])].append(dict(row))
+    return [
+        {"run_id": str(r["id"]), "created_at": str(r["created_at"]), "filename": r["original_filename"],
+         "findings": findings_by_run[str(r["id"])]}
+        for r in same
+    ]
+
+
+async def list_evaluated_run_ids(limit: int = 20) -> list[str]:
+    """Newest evaluated runs first — the server-side source for the UI's device
+    inventory, so it survives a cleared browser."""
+    async with async_session() as session:
+        rows = (await session.execute(
+            text("SELECT id FROM audit_runs WHERE status IN (:evaluated, 'COMPLETE') ORDER BY created_at DESC LIMIT :limit"),
+            {"evaluated": STATUS_EVALUATED, "limit": limit},
+        )).all()
+    return [str(r[0]) for r in rows]
+
+
 async def get_audit_run(audit_run_id: str) -> dict | None:
     """The payload behind GET /api/audit-runs/{id} — run + its findings.
 
@@ -283,7 +438,7 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
                            uploaded_by, status, status_detail, detected_vendor,
                            detected_os, parsing_confidence, schema_version,
                            mean_logprob, reverse_translation_fidelity, parser_agreement,
-                           created_at, updated_at
+                           baseline_snapshot, created_at, updated_at
                     FROM audit_runs WHERE id = :run_id
                     """
                 ),
@@ -323,7 +478,16 @@ async def get_audit_run(audit_run_id: str) -> dict | None:
         ).mappings().first()
 
     result = _jsonable(run_row)
+    snapshot = result.pop("baseline_snapshot", None)
+    if isinstance(snapshot, str):
+        snapshot = json.loads(snapshot)
+    identity = (snapshot or {}).get("device") or {}
+    result["device_key"] = waivers_module.device_key(result.get("detected_vendor"), identity.get("raw_hostname"), result.get("file_hash"))
     result["device"] = {
+        "hostname": identity.get("raw_hostname"),
+        "detected_os_version": identity.get("detected_os_version"),
+        "hardware_model": identity.get("detected_hardware_model"),
+        "serial_number": identity.get("serial_number"),
         "detected_vendor": result.pop("detected_vendor", None),
         "detected_os": result.pop("detected_os", None),
         "parsing_confidence": result.pop("parsing_confidence", None),

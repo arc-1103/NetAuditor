@@ -13,6 +13,7 @@ class VendorDetection:
     hardware_model: str | None
     confidence: float
     evidence: tuple[str, ...] = ()
+    serial_number: str | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class DeviceContext:
     hardware_model: str | None
     confidence: float
     evidence: tuple[str, ...] = ()
+    serial_number: str | None = None
 
 
 @dataclass
@@ -35,6 +37,7 @@ class UnknownBlock:
     reason: str
     fields: list[str] = field(default_factory=list)
     candidate: Any | None = None
+    sections: list[str] = field(default_factory=list)
 
 
 @dataclass

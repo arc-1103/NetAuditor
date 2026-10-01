@@ -28,6 +28,7 @@ _DEVICE_FIELDS_EXCLUDED_FROM_FIDELITY = {
     "detected_os",
     "detected_os_version",
     "detected_hardware_model",
+    "serial_number",
     "config_sha256",
     "parsing_confidence",
     "unknown_blocks_count",

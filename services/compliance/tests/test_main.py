@@ -182,6 +182,7 @@ def test_get_audit_run_returns_run_findings_and_summary(client, monkeypatch):
         AsyncMock(
             return_value={
                 "id": RUN_ID,
+                "device_key": "cisco|edge-rtr",
                 "status": "EVALUATED",
                 "findings": [
                     {"control_id": "CIS-IOS-1.1.2", "severity": "CRITICAL", "risk_score": 40},
@@ -209,7 +210,7 @@ def test_get_audit_run_does_not_fabricate_a_score_for_a_run_never_evaluated(clie
     monkeypatch.setattr(
         main.db,
         "get_audit_run",
-        AsyncMock(return_value={"id": RUN_ID, "status": "NEEDS_REVIEW", "findings": []}),
+        AsyncMock(return_value={"id": RUN_ID, "device_key": "cisco|edge-rtr", "status": "NEEDS_REVIEW", "findings": []}),
     )
 
     resp = client.get(f"/audit-runs/{RUN_ID}")

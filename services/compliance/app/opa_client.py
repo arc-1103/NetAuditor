@@ -61,6 +61,23 @@ def collect_findings(node: Any) -> list[dict]:
     return findings
 
 
+def merge_same_control(findings: list[dict]) -> list[dict]:
+    """One finding per control. A rule that fires once per offending item (each default
+    SNMP community, each weak IKE policy) emits several findings with the same
+    control_id; the database keys findings by (run, control), so they must be folded
+    into one, keeping every piece of evidence."""
+    merged: dict[str, dict] = {}
+    for finding in findings:
+        control_id = finding.get("control_id")
+        if control_id not in merged:
+            merged[control_id] = dict(finding)
+            continue
+        current, extra = merged[control_id].get("evidence") or "", finding.get("evidence") or ""
+        if extra and extra not in current.split(" | "):
+            merged[control_id]["evidence"] = f"{current} | {extra}" if current else extra
+    return list(merged.values())
+
+
 async def evaluate(baseline: dict, framework: str | None = None) -> list[dict]:
     """Evaluate one baseline against a framework's policy bundle.
 
@@ -96,4 +113,4 @@ async def evaluate(baseline: dict, framework: str | None = None) -> list[dict]:
             f"the opa container was started with `run --server /policies`."
         )
 
-    return sorted(collect_findings(body["result"]), key=lambda f: f.get("control_id", ""))
+    return sorted(merge_same_control(collect_findings(body["result"])), key=lambda f: f.get("control_id", ""))

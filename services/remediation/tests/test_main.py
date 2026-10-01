@@ -491,3 +491,41 @@ async def test_bulk_generation_fails_loudly_when_no_fallback_can_produce_anythin
     assert "model not found" in response.json()["detail"]
     save.assert_not_awaited()
 
+
+
+@pytest.mark.asyncio
+async def test_template_proposal_carries_its_rollback_script(monkeypatch):
+    monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
+    response = await request("POST", "/remediation/generate", json={"audit_run_id": RUN_ID, "finding": {**FINDING, "remediation": "ios_ssh_v2_fix.j2"}})
+    body = response.json()
+    assert body["source"] == "template" and "ip ssh version 2" in body["script"]
+    assert "no ip ssh version" in body["rollback_script"] and "@@ROLLBACK@@" not in body["script"]
+
+
+@pytest.mark.asyncio
+async def test_digital_twin_blocks_a_management_acl_that_would_lock_out_operators(monkeypatch):
+    baseline = {"topology": {"interfaces": [{"name": "GigabitEthernet0/0", "ip_address": "10.0.0.1", "subnet_mask": "255.255.255.0"}], "routing_neighbors": []}}
+
+    async def stored_baseline(_run):
+        return baseline
+
+    monkeypatch.setattr(main.db, "get_run_baseline", stored_baseline)
+    monkeypatch.setenv("TWIN_PROTECTED_SUBNETS", "192.168.50.0/24")
+    monkeypatch.setattr(main.db, "save_proposal", AsyncMock())
+    monkeypatch.setattr(main.db, "get_run_parsing_confidence", AsyncMock(return_value=0.99))
+    monkeypatch.setattr(main.db, "get_run_parser_agreement", AsyncMock(return_value=None))
+
+    # the template's default permitted range is 10.0.0.0/24 — operators in 192.168.50.0/24 would be cut off
+    body = (await request("POST", "/remediation/generate", json={"audit_run_id": RUN_ID, "finding": {**FINDING, "remediation": "ios_ssh_mgmt_acl_fix.j2"}})).json()
+    assert body["twin"]["modeled"] is True and body["twin"]["broken"] == 1
+    assert body["preflight"]["status"] == "RISK_FLAGS" and body["preflight"]["engine"].startswith("digital-twin")
+    assert any("SSH from protected subnet 192.168.50.0/24" in flag for flag in body["preflight"]["risk_flags"])
+
+    # supplying the operators' range as the management network makes the same fix pass the twin
+    body = (await request("POST", "/remediation/generate", json={
+        "audit_run_id": RUN_ID, "finding": {**FINDING, "remediation": "ios_ssh_mgmt_acl_fix.j2"},
+        "variables": {"management_network": "192.168.50.0", "management_wildcard": "0.0.0.255"},
+    })).json()
+    assert body["twin"]["broken"] == 0 and not any("Digital twin" in f for f in body["preflight"]["risk_flags"])

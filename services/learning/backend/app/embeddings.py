@@ -19,3 +19,11 @@ def get_embedding_function():
     return SentenceTransformerEmbeddingFunction(
         model_name=MODEL_NAME
     )
+
+
+def embedding_text(block: dict) -> str:
+    """Text to embed for a queued block. The chunk's parent headers (from the
+    hierarchical chunker) lead it, so the vector carries where the commands sit."""
+    sections = (block.get("chunk_context") or {}).get("sections") or []
+    prefix = "Context: " + " | ".join(sections) + chr(10) if sections else ""
+    return (prefix + block["raw_text"])[:2000]

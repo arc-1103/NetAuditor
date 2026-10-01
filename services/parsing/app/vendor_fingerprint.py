@@ -17,6 +17,8 @@ from typing import Protocol
 
 import httpx
 
+from app import service_token
+
 
 @dataclass(frozen=True)
 class VendorGuess:
@@ -46,7 +48,7 @@ class LearningVendorFingerprintProvider:
 
     async def identify(self, text: str) -> VendorGuess | None:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds, headers=service_token.auth_headers("parsing", "svc:parsing", "service_worker")) as client:
                 response = await client.post(
                     f"{self.base_url}/learning/vendor-lookup", json={"text": text}
                 )

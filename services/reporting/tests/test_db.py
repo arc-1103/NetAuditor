@@ -55,7 +55,7 @@ async def sqlite_session(monkeypatch):
         await conn.execute(text(
             """
             CREATE TABLE ledger_events (
-                audit_run_id TEXT NOT NULL, control_id TEXT, event_type TEXT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT, audit_run_id TEXT NOT NULL, control_id TEXT, event_type TEXT,
                 actor TEXT, ruleset_version TEXT, payload TEXT DEFAULT '{}', created_at TEXT
             )
             """

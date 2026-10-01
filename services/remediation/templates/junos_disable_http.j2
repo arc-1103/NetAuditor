@@ -4,3 +4,9 @@ configure
 delete system services web-management http
 commit check
 commit
+@@ROLLBACK@@
+# Rollback: restores the pre-fix state (re-introduces the finding)
+configure
+rollback 1
+commit check
+commit

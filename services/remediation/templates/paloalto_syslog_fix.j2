@@ -3,3 +3,8 @@
 configure
 set shared log-settings syslog {{ syslog_profile | default('netaudit-syslog') }} server {{ syslog_profile | default('netaudit-syslog') }} server {{ syslog_host | default('10.0.0.10') }} transport UDP port 514 format BSD facility LOG_USER
 commit
+@@ROLLBACK@@
+# Rollback: restores the pre-fix state (re-introduces the finding)
+configure
+delete shared log-settings syslog {{ syslog_profile | default('netaudit-syslog') }}
+commit

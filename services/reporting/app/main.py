@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from uuid import UUID
 
@@ -10,6 +11,8 @@ from app.executive_report import (
     fleet_score, fleet_score_trend, remediation_action_mix, top_exposed_devices, violations_found_and_resolved,
 )
 from app.mttr import summarize_mttr
+from app import timesync
+from app.periodicity import count_per_day, detect_cycle
 from app.pdf_service import build_json_report, generate_pdf, render_cef, render_html
 
 app = FastAPI(title="netaudit-reporting", version="1.0.0")
@@ -118,9 +121,12 @@ async def executive_report():
     rather than embedded here."""
     inputs = await db.get_fleet_report_inputs()
     mttr_events = await db.get_ledger_events(("VIOLATION_DETECTED", "APPROVED"))
+    trend = fleet_score_trend(inputs["evaluations"])
     return {
         "fleet_score": fleet_score(inputs["findings_by_run"]),
-        "fleet_score_trend": fleet_score_trend(inputs["evaluations"]),
+        "fleet_score_trend": trend,
+        "score_cycle": detect_cycle(trend),
+        "violation_cycle": detect_cycle(count_per_day(inputs["violation_events"]), value_key="count", fill="zero", mark="high", min_amplitude=2.0),
         "top_exposed_devices": top_exposed_devices(inputs["findings_by_run"], inputs["run_metadata"]),
         "violations": violations_found_and_resolved(inputs["violation_events"], inputs["findings_by_run"]),
         "remediation_action_mix": remediation_action_mix(inputs["proposals"]),
@@ -134,6 +140,12 @@ async def provenance(audit_run_id: str, control_id: str):
     provenance chain for any single finding, linked by ID". See
     app/db.get_provenance_chain."""
     return await db.get_provenance_chain(audit_run_id, control_id)
+
+
+@app.get("/time-status")
+async def time_status():
+    """How far this host's clock is from the internal time source — see app/timesync.py."""
+    return await asyncio.to_thread(timesync.status)
 
 
 @app.get("/reports/{audit_run_id}/cef", response_class=PlainTextResponse)

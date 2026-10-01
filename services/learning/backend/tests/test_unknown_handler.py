@@ -9,9 +9,13 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import unknown_handler
+from app import service_token, unknown_handler
 
 RUN_ID = "11111111-1111-1111-1111-111111111111"
+
+
+def ctx(role="service_worker"):
+    return service_token.mint("parsing", "svc:parsing", role, ttl=3600)
 
 
 class TestUnknownHandler(unittest.TestCase):
@@ -26,6 +30,7 @@ class TestUnknownHandler(unittest.TestCase):
             "audit_run_id": RUN_ID,
             "raw_text": "no ip http server",
             "chunk_context": {"vendor": "cisco"},
+            "context_token": ctx(),
         }
         spy = AsyncMock(return_value=None)
 
@@ -37,15 +42,15 @@ class TestUnknownHandler(unittest.TestCase):
 
     def test_task_rejects_a_block_without_a_block_id(self):
         with self.assertRaisesRegex(ValueError, "block_id"):
-            unknown_handler.receive_unknown_block({"audit_run_id": RUN_ID, "raw_text": "x"})
+            unknown_handler.receive_unknown_block({"audit_run_id": RUN_ID, "raw_text": "x", "context_token": ctx()})
 
     def test_task_rejects_a_block_without_an_audit_run_id(self):
         with self.assertRaisesRegex(ValueError, "audit_run_id"):
-            unknown_handler.receive_unknown_block({"block_id": "b1", "raw_text": "x"})
+            unknown_handler.receive_unknown_block({"block_id": "b1", "raw_text": "x", "context_token": ctx()})
 
     def test_task_rejects_a_block_without_raw_text(self):
         with self.assertRaisesRegex(ValueError, "raw_text"):
-            unknown_handler.receive_unknown_block({"block_id": "b1", "audit_run_id": RUN_ID})
+            unknown_handler.receive_unknown_block({"block_id": "b1", "audit_run_id": RUN_ID, "context_token": ctx()})
 
     def test_worker_reuses_one_event_loop_across_tasks(self):
         """asyncio.run() opens a fresh loop and closes it on every call,
@@ -53,7 +58,7 @@ class TestUnknownHandler(unittest.TestCase):
         worker process (its connections stay bound to the first, now-closed
         loop). _run must actually execute every task on the same persistent
         loop instead."""
-        block = {"block_id": f"{RUN_ID}:0", "audit_run_id": RUN_ID, "raw_text": "x"}
+        block = {"block_id": f"{RUN_ID}:0", "audit_run_id": RUN_ID, "raw_text": "x", "context_token": ctx()}
         seen_loops = []
 
         async def fake_enqueue_block(*args, **kwargs):
@@ -71,3 +76,17 @@ class TestUnknownHandler(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTaskContext(unittest.TestCase):
+    BLOCK = {"block_id": "b1", "audit_run_id": RUN_ID, "raw_text": "x"}
+
+    def test_a_block_without_a_signed_context_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "rejected"):
+            unknown_handler.receive_unknown_block(dict(self.BLOCK))
+
+    def test_a_forged_or_wrong_role_context_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "rejected"):
+            unknown_handler.receive_unknown_block({**self.BLOCK, "context_token": "a.b.c"})
+        with self.assertRaisesRegex(ValueError, "service_worker"):
+            unknown_handler.receive_unknown_block({**self.BLOCK, "context_token": ctx("auditor")})

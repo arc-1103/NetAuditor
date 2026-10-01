@@ -2,3 +2,11 @@
 config system snmp community
     delete {{ snmp_community_id | default(1) }}
 end
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+! REVIEW: recreate the community (name, hosts) from the pre-change backup
+config system snmp community
+    edit {{ snmp_community_id | default(1) }}
+        set name "public"
+    next
+end

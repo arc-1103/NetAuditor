@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.guardrails import check_output, injection_hits, sanitize_query
 from app.manual_provider import RemediationManualProvider
 from app.slm_client import OllamaSLMClient, SLMError
 
@@ -78,12 +79,22 @@ async def synthesize_remediation(
     slm_client: OllamaSLMClient,
 ) -> RemediationResult:
     manual_context = await manual_provider.lookup(vendor, os_name, control_id)
+    # Retrieved excerpts and device evidence are untrusted text headed for the
+    # model: withhold poisoned excerpts whole, redact injection phrases in evidence.
+    manual_context = [m for m in manual_context if not injection_hits(m)]
+    evidence, _ = sanitize_query(evidence)
     prompt = _build_prompt(vendor, os_name, control_id, title, evidence, manual_context)
 
     try:
         raw = await slm_client.synthesize(prompt)
     except SLMError as exc:
         raise RemediationSynthesisError(str(exc)) from exc
+
+    # Output guard: generated commands must not exfiltrate data or carry injected text.
+    produced = " ".join(str(raw.get(k) or "") for k in ("remediation_cli", "unified_diff", "rollback_cli"))
+    problems = check_output(produced)
+    if problems:
+        raise RemediationSynthesisError(f"Output guardrail blocked the generated fix: {problems[0]}")
 
     remediation_cli = str(raw.get("remediation_cli") or "").strip()
     if not remediation_cli:

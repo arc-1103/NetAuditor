@@ -33,6 +33,16 @@ engine = create_async_engine(settings.postgres_dsn, echo=False, poolclass=NullPo
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+async def save_security_flags(audit_run_id: str, flags: list[dict[str, Any]]) -> None:
+    """Record what the ingest gate's input guard neutralised (app/input_guard.py)
+    so it is visible on the audit run. Touches only status_detail, never status."""
+    async with async_session() as session, session.begin():
+        await session.execute(
+            text("UPDATE audit_runs SET status_detail = :detail, updated_at = :updated_at WHERE id = :run_id"),
+            {"detail": json.dumps({"security_flags": flags}), "updated_at": datetime.now(timezone.utc), "run_id": audit_run_id},
+        )
+
+
 async def mark_needs_review(audit_run_id: str, detail: dict[str, Any]) -> None:
     """Record why a job could not reach Compliance, so the run doesn't stall
     at INGESTED with no visible reason. Overwrites any prior status_detail —

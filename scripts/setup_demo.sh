@@ -30,5 +30,16 @@ PY
   echo "Generated a unique JWT secret in gateway/.env"
 fi
 
+# Shared key for signed service-to-service tokens (Learning service authentication).
+if ! grep -q '^SERVICE_JWT_SECRET=.\+' .env; then
+  if command -v openssl >/dev/null; then
+    sed -i '/^SERVICE_JWT_SECRET=/d' .env
+    echo "SERVICE_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+    echo "Generated SERVICE_JWT_SECRET in .env"
+  else
+    echo "WARNING: openssl not found - set SERVICE_JWT_SECRET in .env yourself (compose will not start without it)"
+  fi
+fi
+
 ./scripts/check_env.sh
 echo "Environment ready. Start with: docker compose up --build -d"

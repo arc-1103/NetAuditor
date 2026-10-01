@@ -16,9 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 from app.auth import (
+    AUTH_PROVIDER, keycloak_login,
     get_current_user, authenticate_user, issue_token, require_admin,
     require_operator, require_reader, validate_runtime_secret,
 )
+from app import service_token
 from app.db import get_session
 
 app = FastAPI(title="netaudit-gateway")
@@ -114,6 +116,13 @@ class LearningMapRequest(BaseModel):
     value: str
     vendor: str = "unknown"
     os: str | None = None
+    access_tier: str = "admin"  # public | admin: who may retrieve this mapping
+
+
+class LearningSearchRequest(BaseModel):
+    query: str = Field(max_length=8000)
+    vendor: str | None = None
+    os: str | None = None
 
 
 class RemediationApproveRequest(BaseModel):
@@ -159,6 +168,9 @@ async def health():
 
 @app.post("/api/login")
 async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+    if AUTH_PROVIDER == "keycloak":
+        token, user = await keycloak_login(body.email, body.password)
+        return {"access_token": token, "token_type": "bearer", "user": {"id": user["id"], "email": user["email"], "role": user["role"]}}
     user = await authenticate_user(body.email, body.password, session)
     token = issue_token(user)
     return {"access_token": token, "token_type": "bearer", "user": user}
@@ -184,6 +196,48 @@ async def upload(request: Request, file: UploadFile = File(...), user=Depends(re
         # AuditRun instead of relying on a shared trust boundary.
         headers = {"X-User-Id": user["sub"], "X-User-Email": user.get("email", "")}
         resp = await client.post(f"{INGESTION_URL}/upload", files=files, headers=headers)
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+class CollectRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=253)
+    device_type: str
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256, repr=False)
+    port: int = 22
+    method: str = "netmiko"
+
+
+@app.get("/api/time-status")
+async def time_status(user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{REPORTING_URL}/time-status")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/collect")
+async def collect_config(body: CollectRequest, user=Depends(require_operator)):
+    """Online ingest (Netmiko/NAPALM). Credentials are forwarded once to
+    Ingestion and never stored or logged; Ingestion refuses unless collection
+    is enabled and the host is in its allowed networks."""
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(
+            f"{INGESTION_URL}/collect", json=body.model_dump(),
+            headers={"X-User-Id": user["sub"], "X-User-Email": user.get("email", "")},
+        )
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/audit-runs")
+async def list_audit_runs(limit: int = 20, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/audit-runs", params={"limit": limit})
     if resp.status_code >= 400:
         raise upstream_error(resp)
     return resp.json()
@@ -215,6 +269,106 @@ async def simulate_fix(run_id: str, control_id: str, user=Depends(require_reader
     return resp.json()
 
 
+@app.get("/api/audit-runs/{run_id}/history")
+async def get_history(run_id: str, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/audit-runs/{run_id}/history")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/audit-runs/{run_id}/drift/{control_id}")
+async def get_drift(run_id: str, control_id: str, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/audit-runs/{run_id}/drift/{control_id}")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+async def _compliance_get(path: str):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}{path}")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/topology/fleet")
+async def fleet_topology(user=Depends(require_reader)):
+    return await _compliance_get("/topology/fleet")
+
+
+class WaiverRequest(BaseModel):
+    audit_run_id: str
+    control_id: str
+    reason: str = Field(min_length=1, max_length=2000)
+    expires_at: str
+    ticket: str | None = Field(default=None, max_length=200)
+
+
+class RevokeRequest(BaseModel):
+    reason: str = Field(default="", max_length=2000)
+
+
+def _who(user: dict) -> dict:
+    return {"X-User-Id": user["sub"], "X-User-Email": user.get("email", "")}
+
+
+@app.get("/api/waivers")
+async def list_waivers(status: str | None = None, user=Depends(require_reader)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.get(f"{COMPLIANCE_URL}/waivers", params={"status": status} if status else None)
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/waivers")
+async def grant_waiver(body: WaiverRequest, user=Depends(require_admin)):
+    """Admin-only: accept the risk of one failing control until a date. The grant
+    is a ledger event attributed to the verified caller."""
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(f"{COMPLIANCE_URL}/waivers", json=body.model_dump(), headers=_who(user))
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/waivers/{waiver_id}/revoke")
+async def revoke_waiver(waiver_id: str, body: RevokeRequest, user=Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(f"{COMPLIANCE_URL}/waivers/{waiver_id}/revoke", json=body.model_dump(), headers=_who(user))
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/ledger/status")
+async def ledger_status(user=Depends(require_reader)):
+    return await _compliance_get("/ledger/status")
+
+
+@app.get("/api/ledger/verify")
+async def ledger_verify(user=Depends(require_reader)):
+    return await _compliance_get("/ledger/verify")
+
+
+@app.get("/api/ledger/proof/{event_id}")
+async def ledger_proof(event_id: str, user=Depends(require_reader)):
+    return await _compliance_get(f"/ledger/proof/{event_id}")
+
+
+@app.post("/api/ledger/seal")
+async def ledger_seal(user=Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(f"{COMPLIANCE_URL}/ledger/seal")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
 @app.get("/api/audit-runs/{run_id}/topology")
 async def get_topology(run_id: str, user=Depends(require_reader)):
     async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
@@ -239,8 +393,27 @@ async def generate_report(body: ReportGenerateRequest, user=Depends(require_read
 
 @app.get("/api/learning/queue")
 async def get_learning_queue(user=Depends(require_admin)):
-    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT, headers=service_token.auth_headers("gateway", user["sub"], user["role"])) as client:
         resp = await client.get(f"{LEARNING_URL}/learning/queue")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.get("/api/learning/queue/{block_id}/similar")
+async def get_learning_similar(block_id: str, user=Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT, headers=service_token.auth_headers("gateway", user["sub"], user["role"])) as client:
+        resp = await client.get(f"{LEARNING_URL}/learning/queue/{block_id}/similar")
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    return resp.json()
+
+
+@app.post("/api/learning/search")
+async def search_learning_mappings(body: LearningSearchRequest, user=Depends(require_reader)):
+    # The caller's role travels to the index, which filters on it before ranking.
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT, headers=service_token.auth_headers("gateway", user["sub"], user["role"])) as client:
+        resp = await client.post(f"{LEARNING_URL}/learning/search", json=body.model_dump())
     if resp.status_code >= 400:
         raise upstream_error(resp)
     return resp.json()
@@ -251,11 +424,8 @@ async def submit_learning_map(body: LearningMapRequest, user=Depends(require_adm
     # Blueprint §3.2: admin maps an unrecognized CLI pattern to a
     # SecurityBaseline field/value; Learning lane persists it with the
     # submitting admin's id for the confirmed-mapping record.
-    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
-        headers = {"X-User-Id": user["sub"]}
-        resp = await client.post(
-            f"{LEARNING_URL}/learning/map", json=body.model_dump(), headers=headers
-        )
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT, headers=service_token.auth_headers("gateway", user["sub"], user["role"])) as client:
+        resp = await client.post(f"{LEARNING_URL}/learning/map", json=body.model_dump())
     if resp.status_code >= 400:
         raise upstream_error(resp)
     return resp.json()

@@ -26,6 +26,7 @@ class DeviceMetadata(StrictModel):
     detected_os: str | None = None
     detected_os_version: str | None = None
     detected_hardware_model: str | None = None
+    serial_number: str | None = None
     config_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     parsing_confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     unknown_blocks_count: Annotated[int, Field(ge=0)] = 0

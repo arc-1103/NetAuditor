@@ -3,4 +3,9 @@ configure terminal
 ip ssh version 2
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+no ip ssh version
+end
+write memory

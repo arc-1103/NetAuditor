@@ -6,3 +6,12 @@ config vpn ipsec phase1-interface
         set dhgrp 14
     next
 end
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+! REVIEW: restore the original proposal from the pre-change backup; these are common legacy values
+config vpn ipsec phase1-interface
+    edit "{{ vpn_name | default('vpn1') }}"
+        set proposal 3des-sha1
+        set dhgrp 5
+    next
+end

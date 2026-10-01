@@ -5,3 +5,10 @@ config system admin
         set trusthost1 {{ management_network | default('10.0.0.0') }} {{ management_netmask | default('255.255.255.0') }}
     next
 end
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+config system admin
+    edit "{{ admin_user | default('admin') }}"
+        unset trusthost1
+    next
+end

@@ -57,6 +57,7 @@ async def sqlite_session(monkeypatch):
                 approved_by TEXT, approval_comment TEXT, approved_at TEXT,
                 pre_change_baseline_sha256 TEXT, applied_at TEXT,
                 rollback_status TEXT NOT NULL DEFAULT 'NONE',
+                twin TEXT,
                 created_at TEXT, updated_at TEXT,
                 PRIMARY KEY (audit_run_id, control_id)
             )

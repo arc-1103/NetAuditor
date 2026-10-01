@@ -81,3 +81,41 @@ def fleet_score(findings_by_run: dict[str, list[dict]]) -> dict:
         "devices_scored": len(findings_by_run),
         "fleet_score": round((total_passed_weight / total_weight) * 100) if total_weight else 100,
     }
+
+
+# Titles as written in generic_level1.rego — only failing controls carry a
+# title in the database, so a PASS row needs its own copy. Keep in sync with
+# the Rego file (and with services/compliance/app/risk_scorer.py, which this duplicates).
+CONTROL_TITLES = {
+    "CIS-NET-1.1.1": "Ensure SSH version 2 is configured where SSH is in use",
+    "CIS-NET-1.1.2": "Ensure Telnet is not used for administrative access",
+    "CIS-NET-1.1.3": "Ensure SSH management access is restricted by an ACL",
+    "CIS-NET-1.2.1": "Ensure SNMP is not using version 1 or 2c",
+    "CIS-NET-1.2.2": "Ensure default SNMP community strings are not used",
+    "CIS-NET-1.3.1": "Ensure IKE/IPsec Phase 1 proposals do not use DES or 3DES encryption",
+    "CIS-NET-1.4.1": "Ensure NTP authentication is enabled where NTP is in use",
+    "CIS-NET-1.5.1": "Ensure stored passwords/secrets are not left unencrypted",
+    "CIS-NET-1.6.1": "Ensure a legal login banner is configured",
+    "CIS-NET-1.7.1": "Ensure unencrypted HTTP administrative access is disabled",
+    "CIS-NET-1.8.1": "Ensure logging is sent to a remote syslog host",
+}
+
+
+def control_results(findings: list[dict]) -> list[dict]:
+    """Explicit PASS/FAIL per control, worst severity first: every catalog
+    control plus any failing control outside it."""
+    failed = {f["control_id"]: f for f in findings if f.get("control_id")}
+    rows = []
+    for control_id in {**CONTROL_CATALOG, **{cid: None for cid in failed}}:
+        finding = failed.get(control_id)
+        severity = str(finding["severity"]).upper() if finding else CONTROL_CATALOG.get(control_id, "MEDIUM")
+        rows.append({
+            "control_id": control_id,
+            "title": (finding or {}).get("title") or CONTROL_TITLES.get(control_id, control_id),
+            "result": ("WAIVED" if finding.get("waiver") else "FAIL") if finding else "PASS",
+            "severity": severity,
+            **({"waiver": finding["waiver"]} if finding and finding.get("waiver") else {}),
+        })
+    order = {level: i for i, level in enumerate(SEVERITY_ORDER)}
+    rank = {"FAIL": 0, "WAIVED": 1, "PASS": 2}
+    return sorted(rows, key=lambda r: (rank[r["result"]], order.get(r["severity"], 9), r["control_id"]))

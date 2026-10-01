@@ -4,3 +4,9 @@ config log syslogd setting
     set status enable
     set server "{{ syslog_host | default('10.0.0.10') }}"
 end
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+config log syslogd setting
+    set status disable
+    unset server
+end

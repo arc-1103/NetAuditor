@@ -6,3 +6,9 @@ config system ntp
     set key-type SHA1
     set key <REPLACE_NTP_KEY>
 end
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+config system ntp
+    set authentication disable
+    unset key
+end

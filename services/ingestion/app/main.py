@@ -4,8 +4,10 @@ Run: uvicorn app.main:app --reload --port 8001
 """
 import uuid
 from fastapi import FastAPI, UploadFile, File, Header, HTTPException
+from pydantic import BaseModel, Field, SecretStr
+from app.collector import CollectorError, collect_config
 from app.uploader import validate_and_store
-from app.chunker import chunk_config
+from app.chunker import chunk_hierarchical
 from app.queue_producer import enqueue_parsing_job
 from app.db import create_audit_run, get_audit_run_id_by_hash
 
@@ -15,17 +17,8 @@ app = FastAPI(title="netaudit-ingestion")
 async def health():
     return {"status": "ok", "service": "ingestion"}
 
-@app.post("/upload")
-async def upload_config(
-    file: UploadFile = File(...),
-    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
-):
-    """
-    Accepts a raw device config file, validates it, stores it in MinIO,
-    records an AuditRun (status=INGESTED), and enqueues a parsing job.
-    See /contracts/ingestion_job.schema.json for the exact payload shape
-    sent to Parsing.
-    """
+async def _ingest(file, x_user_id: str | None) -> dict:
+    """Shared by /upload and /collect: validate, store, dedup, record, enqueue."""
     try:
         stored = await validate_and_store(file)
     except ValueError as e:
@@ -57,6 +50,47 @@ async def upload_config(
     # `credential_evidence` (from validate_and_store) is already persisted
     # inside create_audit_run — see docs/ArchitecturalChanges.md §2.
 
-    chunks = chunk_config(stored["raw_text"])
+    chunks = chunk_hierarchical(stored["raw_text"])
     job = enqueue_parsing_job(run_id, stored, chunks, uploaded_by)
     return {"job_id": job["job_id"], "status": "queued"}
+
+
+@app.post("/upload")
+async def upload_config(
+    file: UploadFile = File(...),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """
+    Accepts a raw device config file, validates it, stores it in MinIO,
+    records an AuditRun (status=INGESTED), and enqueues a parsing job.
+    See /contracts/ingestion_job.schema.json for the exact payload shape
+    sent to Parsing.
+    """
+    return await _ingest(file, x_user_id)
+
+
+class CollectRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=253)
+    device_type: str
+    username: str = Field(min_length=1, max_length=128)
+    password: SecretStr
+    port: int = 22
+    method: str = "netmiko"
+
+
+@app.post("/collect")
+async def collect(body: CollectRequest, x_user_id: str | None = Header(default=None, alias="X-User-Id")):
+    """
+    Online ingest: log in to the device (Netmiko or NAPALM), read its running
+    configuration, and feed it through the same pipeline as an upload. Disabled
+    unless COLLECTOR_ENABLED=true and the host is inside COLLECTOR_ALLOWED_CIDRS
+    (app/collector.py). Credentials are used once and never stored.
+    """
+    try:
+        upload = await collect_config(
+            body.host, body.port, body.device_type, body.username,
+            body.password.get_secret_value(), body.method,
+        )
+    except CollectorError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await _ingest(upload, x_user_id)

@@ -1,4 +1,7 @@
 import json
+from datetime import datetime, timezone
+
+from app import waivers
 import os
 from datetime import datetime, timezone
 
@@ -18,7 +21,7 @@ async def get_report_data(audit_run_id: str) -> dict | None:
         run = (await session.execute(text("""
             SELECT id, file_hash, original_filename, status, detected_vendor,
                    detected_os, parsing_confidence, schema_version,
-                   created_at, updated_at
+                   baseline_snapshot, status_detail, created_at, updated_at
             FROM audit_runs WHERE id=:run_id
         """), {"run_id": audit_run_id})).mappings().first()
         if run is None:
@@ -31,7 +34,7 @@ async def get_report_data(audit_run_id: str) -> dict | None:
                      WHEN 'MEDIUM' THEN 3 ELSE 4 END, control_id
         """), {"run_id": audit_run_id})).mappings().all()
         remediations = (await session.execute(text("""
-            SELECT control_id, script, rollback_script, source, preflight_status, risk_flags,
+            SELECT control_id, script, rollback_script, source, preflight_status, risk_flags, twin,
                    approval_status, approval_comment, approved_at
             FROM remediation_proposals WHERE audit_run_id=:run_id
             ORDER BY control_id
@@ -45,6 +48,27 @@ async def get_report_data(audit_run_id: str) -> dict | None:
     result = {**_jsonable(run), "findings": [_jsonable(r) for r in findings],
               "remediations": [_jsonable(r) for r in remediations],
               "evaluation": _jsonable(evaluation) if evaluation else None}
+    events = await get_ledger_events((waivers.GRANTED, waivers.REVOKED))
+    detail = result.get("status_detail")
+    if isinstance(detail, str):
+        detail = json.loads(detail)
+    result["security_flags"] = (detail or {}).get("security_flags", []) if isinstance(detail, dict) else []
+    result.pop("status_detail", None)
+    snapshot = result.pop("baseline_snapshot", None)
+    if isinstance(snapshot, str):
+        snapshot = json.loads(snapshot)
+    identity = (snapshot or {}).get("device") or {}
+    key = waivers.device_key(result.get("detected_vendor"), identity.get("raw_hostname"), result.get("file_hash"))
+    listing = waivers.evaluate(events, datetime.now(timezone.utc))
+    result["findings"] = waivers.annotate(result["findings"], listing, key)
+    result["device"] = {
+        "hostname": identity.get("raw_hostname"),
+        "vendor": result.get("detected_vendor"),
+        "os": result.get("detected_os"),
+        "os_version": identity.get("detected_os_version"),
+        "hardware_model": identity.get("detected_hardware_model"),
+        "serial_number": identity.get("serial_number"),
+    }
     for item in result["findings"]:
         if isinstance(item.get("blast_radius"), str):
             item["blast_radius"] = json.loads(item["blast_radius"])
@@ -53,6 +77,8 @@ async def get_report_data(audit_run_id: str) -> dict | None:
     for item in result["remediations"]:
         if isinstance(item.get("risk_flags"), str):
             item["risk_flags"] = json.loads(item["risk_flags"])
+        if isinstance(item.get("twin"), str):
+            item["twin"] = json.loads(item["twin"])
     return result
 
 
@@ -155,7 +181,7 @@ async def get_provenance_chain(audit_run_id: str, control_id: str) -> dict:
             "WHERE audit_run_id=:run_id AND control_id=:control_id"
         ), {"run_id": audit_run_id, "control_id": control_id})).mappings().first()
         events = (await session.execute(text(
-            "SELECT event_type, actor, ruleset_version, payload, created_at FROM ledger_events "
+            "SELECT CAST(id AS TEXT) AS id, event_type, actor, ruleset_version, payload, created_at FROM ledger_events "
             "WHERE audit_run_id=:run_id AND control_id=:control_id ORDER BY created_at"
         ), {"run_id": audit_run_id, "control_id": control_id})).mappings().all()
 

@@ -160,3 +160,24 @@ async def test_evaluate_falls_back_to_default_framework(monkeypatch, baseline):
     await opa_client.evaluate(baseline)
 
     assert stub.calls[0][0].endswith("/compliance/stig")
+
+
+# ── merge_same_control ──────────────────────────────────────────────
+def test_two_findings_for_one_control_fold_into_one_keeping_all_evidence():
+    """A device with both `public` and `private` communities makes the rule fire twice;
+    persisting both would violate the (run, control) primary key."""
+    findings = [
+        {"control_id": "CIS-NET-1.2.2", "severity": "CRITICAL", "evidence": "Default community string detected: public"},
+        {"control_id": "CIS-NET-1.8.1", "severity": "MEDIUM", "evidence": "no syslog"},
+        {"control_id": "CIS-NET-1.2.2", "severity": "CRITICAL", "evidence": "Default community string detected: private"},
+        {"control_id": "CIS-NET-1.2.2", "severity": "CRITICAL", "evidence": "Default community string detected: private"},
+    ]
+    merged = opa_client.merge_same_control(findings)
+    assert [f["control_id"] for f in merged] == ["CIS-NET-1.2.2", "CIS-NET-1.8.1"]
+    assert merged[0]["evidence"] == "Default community string detected: public | Default community string detected: private"
+    assert findings[0]["evidence"] == "Default community string detected: public"  # input is not mutated
+
+
+def test_distinct_controls_pass_through_unchanged():
+    findings = [{"control_id": "A", "evidence": "x"}, {"control_id": "B", "evidence": "y"}]
+    assert opa_client.merge_same_control(findings) == findings

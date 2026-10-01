@@ -6,7 +6,9 @@ from uuid import UUID
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from weasyprint import HTML
 
-from app.scoring import summarize
+from app.scoring import control_results, summarize
+from app import timesync, waivers
+from app.version_guidance import guidance_for
 
 TEMPLATE_DIR = Path(__file__).parents[1] / "html_templates"
 OUTPUT_DIR = Path(os.getenv("PDF_OUTPUT_DIR", "/data/reports"))
@@ -17,11 +19,20 @@ def render_html(report_data: dict) -> str:
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
     template = env.get_template("audit_report.html")
     remediations = {item["control_id"]: item for item in report_data.get("remediations", [])}
+    findings = report_data.get("findings", [])
+    counting, waived = waivers.split(findings)
+    device = report_data.get("device") or {}
     return template.render(
         run=report_data,
-        findings=report_data.get("findings", []),
+        findings=findings,
         remediations=remediations,
-        summary=summarize(report_data.get("findings", [])),
+        device=device,
+        control_results=control_results(findings),
+        firmware_notes=guidance_for(device, findings),
+        time_sync=timesync.describe(timesync.status()),
+        summary=summarize(counting),
+        waived=waived,
+        score_without_waivers=summarize(findings)["compliance_score"],
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
 
@@ -40,7 +51,12 @@ def build_json_report(report_data: dict) -> dict:
             )
         },
         "evaluation": report_data.get("evaluation"),
-        "summary": summarize(report_data.get("findings", [])),
+        "device": report_data.get("device"),
+        "time_sync": timesync.status(),
+        "summary": summarize(waivers.split(report_data.get("findings", []))[0]),
+        "waived": waivers.split(report_data.get("findings", []))[1],
+        "control_results": control_results(report_data.get("findings", [])),
+        "firmware_notes": guidance_for(report_data.get("device") or {}, report_data.get("findings", [])),
         "findings": report_data.get("findings", []),
         "remediations": report_data.get("remediations", []),
     }

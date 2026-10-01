@@ -11,7 +11,7 @@ from celery import Celery
 
 from schema.security_baseline import SecurityBaseline
 
-from . import db
+from . import db, service_token
 from .agreement import compute_agreement
 from .config import settings
 from .deterministic_extractor import DeterministicExtractorProvider, EmptyDeterministicExtractorProvider, TextFSMExtractor
@@ -25,6 +25,7 @@ from .rag import LearningRAGContextProvider, RAGContextProvider
 from .reverse_translation import compute_fidelity
 from .schema_validator import BaselineValidator
 from .slm_client import OllamaSLMClient, SLMError
+from . import input_guard
 from .vendor_detector import detect_job_context
 from .vendor_fingerprint import LearningVendorFingerprintProvider, VendorFingerprintProvider
 
@@ -115,6 +116,9 @@ def validate_ingestion_job(job: dict[str, Any]) -> dict[str, Any]:
             raise IngestionPayloadError("each chunk requires a non-negative integer index")
         if not isinstance(chunk.get("text"), str):
             raise IngestionPayloadError("each chunk requires string text")
+        sections = chunk.get("sections")
+        if sections is not None and not (isinstance(sections, list) and all(isinstance(item, str) for item in sections)):
+            raise IngestionPayloadError("chunk sections must be a list of strings")
         indices.append(chunk["index"])
     if indices != list(range(len(indices))):
         raise IngestionPayloadError("chunks must contain unique contiguous 0-based indices")
@@ -206,6 +210,7 @@ async def _parse_chunk(
 
             if mean_logprob is not None and mean_logprob < settings.logprob_uncertainty_threshold:
                 return None, UnknownBlock(
+                    sections=chunk.get("sections", []),
                     chunk_index=chunk["index"],
                     text=text,
                     reason=(
@@ -221,6 +226,7 @@ async def _parse_chunk(
                 )
                 if fidelity is not None and fidelity < settings.reverse_translation_fidelity_threshold:
                     return None, UnknownBlock(
+                        sections=chunk.get("sections", []),
                         chunk_index=chunk["index"],
                         text=text,
                         reason=(
@@ -258,6 +264,7 @@ async def _parse_chunk(
             "detected_os": device_context.os,
             "detected_os_version": device_context.os_version,
             "detected_hardware_model": device_context.hardware_model,
+            "serial_number": device_context.serial_number,
             # Source-of-truth comes from Ingestion, never from SLM output.
             "config_sha256": file_hash,
             "parsing_confidence": float(device.get("parsing_confidence", 0.0)),
@@ -268,6 +275,7 @@ async def _parse_chunk(
 
     except (SLMError, ValueError, TypeError) as exc:
         return None, UnknownBlock(
+            sections=chunk.get("sections", []),
             chunk_index=chunk["index"],
             text=text,
             reason=str(exc),
@@ -292,8 +300,21 @@ async def _process_config(
     fingerprint_provider = vendor_fingerprint_provider or _vendor_fingerprint
     det_provider = deterministic_extractor_provider or _deterministic_extractor
     validate_ingestion_job(job)
+    job = {**job}
+    job["chunks"], security_flags = input_guard.sanitize_chunks(job["chunks"])
+    if security_flags:
+        logger.warning("Input guard changed %d line(s) in job %s: %s", len(security_flags), job["job_id"], security_flags[:5])
+        try:
+            await db.save_security_flags(job["job_id"], security_flags)
+        except Exception:  # recording is evidence, not a gate: never fail the parse over it
+            logger.exception("Could not record input-guard flags for job %s", job["job_id"])
 
-    device_context = detect_job_context(job["chunks"])
+    try:
+        device_context = input_guard.run_bounded(detect_job_context, job["chunks"])
+    except input_guard.ParseSandboxTimeout:
+        detail = {"reason": "parser_timeout", "security_flags": security_flags}
+        await db.mark_needs_review(job["job_id"], detail)
+        return {"status": "human_review", "audit_run_id": job["job_id"], "reason": "Parsing exceeded its hard time limit", "security_flags": security_flags}
     baselines: list[SecurityBaseline] = []
     unknown_blocks: list[UnknownBlock] = []
     chunk_confidences: list[float] = []
@@ -321,6 +342,7 @@ async def _process_config(
             "detected_os": device_context.os,
             "confidence": device_context.confidence,
             "unknown_blocks_count": len(unknown_blocks),
+            "security_flags": security_flags,
         }
         await _add_semantic_vendor_guess(detail, device_context, job["chunks"], fingerprint_provider)
         await db.mark_needs_review(job["job_id"], detail)
@@ -433,6 +455,7 @@ def _context_to_dict(context: DeviceContext) -> dict[str, Any]:
         "os_version": context.os_version,
         "raw_hostname": context.raw_hostname,
         "hardware_model": context.hardware_model,
+        "serial_number": context.serial_number,
         "confidence": context.confidence,
         "evidence": list(context.evidence),
     }
@@ -490,7 +513,9 @@ def _dispatch_unknown_blocks(job_id: str, device_context: DeviceContext, unknown
                     "block_id": f"{job_id}:{block.chunk_index}",
                     "audit_run_id": job_id,
                     "raw_text": block.text,
-                    "chunk_context": context,
+                    "chunk_context": {**context, "sections": block.sections} if block.sections else context,
+                    # Explicit internal principal for the background task; the queue can delay it, so a longer expiry.
+                    "context_token": service_token.mint("parsing", "svc:parsing", "service_worker", ttl=3600),
                 }
             ],
             queue="learning",

@@ -4,4 +4,11 @@ no snmp-server community public
 no snmp-server community private
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+! REVIEW: confirm the original access mode of each community before restoring
+snmp-server community public RO
+snmp-server community private RW
+end
+write memory

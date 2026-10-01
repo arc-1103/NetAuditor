@@ -7,12 +7,21 @@ networks:
   # everything else stays on audit-net with no route out.
   edge:
     name: ${EDGE_NETWORK_NAME:-audit-edge}
+  # The Learning service's only network. `internal: true` gives it no route in
+  # from the host or out to the internet, and no port is published for it. Only
+  # the four callers (gateway, parsing, compliance, remediation) and the data
+  # stores it uses (postgres, redis, chromadb) join, so every other container
+  # (ingestion, reporting, frontend, nginx, keycloak, ...) cannot even resolve
+  # `learning`. Requests must also carry a signed service token (SERVICE_JWT_SECRET).
+  learning-net:
+    internal: true
+    name: ${LEARNING_NETWORK_NAME:-learning-net}
 
 services:
   postgres:
     image: postgres:16.4
     env_file: .env
-    networks: [audit-net]
+    networks: [audit-net, learning-net]
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres:/docker-entrypoint-initdb.d:ro
@@ -25,7 +34,7 @@ services:
 
   redis:
     image: redis:7.4.0-alpine
-    networks: [audit-net]
+    networks: [audit-net, learning-net]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -50,7 +59,7 @@ services:
   chromadb:
     image: chromadb/chroma
     profiles: ["advanced"]
-    networks: [audit-net]
+    networks: [audit-net, learning-net]
     volumes:
       - chromadata:/chroma/chroma
     restart: unless-stopped
@@ -109,6 +118,70 @@ services:
     profiles: ["advanced"]
     networks: [audit-net]
 
+  siem-forwarder:
+    image: fluent/fluent-bit:3.1
+    # Receives NetAudit's webhook events, converts them to CEF, and (with
+    # SIEM_CONFIG=siem.conf) forwards them by syslog to SIEM_HOST:SIEM_PORT.
+    # The default stdout.conf only prints the CEF lines, so nothing leaves
+    # the host unless an operator opts in.
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/${SIEM_CONFIG:-stdout.conf}"]
+    environment:
+      SIEM_HOST: ${SIEM_HOST:-127.0.0.1}
+      SIEM_PORT: ${SIEM_PORT:-514}
+      SIEM_MODE: ${SIEM_MODE:-tcp}
+    volumes:
+      - ./infra/fluent-bit:/fluent-bit/etc:ro
+    networks: [audit-net]
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: ["iam"]
+    # start-dev keeps Keycloak's data in its embedded H2 store, which is fine
+    # for evaluation. For production run `start` with a Postgres database,
+    # TLS and a real hostname (see docs/IAM_KEYCLOAK.md).
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-kcadmin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-}
+      KC_DEMO_PASSWORD: ${KC_DEMO_PASSWORD:-}
+      KC_HOSTNAME_STRICT: "false"
+    volumes:
+      - ./infra/keycloak/netaudit-realm.json:/opt/keycloak/data/import/netaudit-realm.json:ro
+      - keycloakdata:/opt/keycloak/data
+    networks: [audit-net]
+    restart: unless-stopped
+
+  vault:
+    image: hashicorp/vault:1.17
+    profiles: ["secrets"]
+    # Production-style server (file storage, sealed at start) — NOT dev mode.
+    # First run needs `vault operator init` and `vault operator unseal`; see
+    # docs/SECRETS_VAULT.md. Services read secrets via VAULT_ADDR (see
+    # infra/vault/vault_loader.py); with it unset they use their .env as before.
+    command: ["server", "-config=/vault/config/config.hcl"]
+    cap_add: [IPC_LOCK]
+    volumes:
+      - ./infra/vault/config.hcl:/vault/config/config.hcl:ro
+      - vaultdata:/vault/file
+    networks: [audit-net]
+    restart: unless-stopped
+
+  ntp:
+    image: simonrupf/chronyd:latest
+    profiles: ["time"]
+    # Internal NTP server for devices and hosts in the isolated network. Edit
+    # infra/ntp/chrony.conf to point at a GPS/PPS receiver or an internal
+    # Stratum 1/2 source (see docs/TIME_SYNC.md). Serving time needs UDP 123
+    # and the SYS_TIME capability to discipline the host clock only if you
+    # run this as the host's own time source; by default it only serves.
+    volumes:
+      - ./infra/ntp/chrony.conf:/etc/chrony/chrony.conf:ro
+    ports:
+      - "123:123/udp"
+    networks: [audit-net]
+    restart: unless-stopped
+
   neo4j:
     image: neo4j:5.26.0
     profiles: ["advanced"]
@@ -137,6 +210,12 @@ services:
   ingestion:
     build: ./services/ingestion
     env_file: ./services/ingestion/.env
+    environment:
+      # Online collection (Netmiko/NAPALM). Off by default so an air-gapped
+      # deployment cannot reach devices; enable per environment and list the
+      # management networks it may contact.
+      COLLECTOR_ENABLED: ${COLLECTOR_ENABLED:-false}
+      COLLECTOR_ALLOWED_CIDRS: ${COLLECTOR_ALLOWED_CIDRS:-}
     depends_on:
       redis: {condition: service_healthy}
       minio: {condition: service_healthy}
@@ -157,17 +236,43 @@ services:
     depends_on:
       redis: {condition: service_healthy}
       postgres: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [audit-net, learning-net]
     restart: unless-stopped
+    # Sandbox: this container parses attacker-influenced config text (regex
+    # parsers, local LLM prompts), so assume it can be exploited and limit
+    # what an exploit gets. Docker's default seccomp profile applies on top.
+    # For a stronger boundary set PARSER_RUNTIME=runsc (gVisor) on hosts that
+    # have it, or add an AppArmor profile — see docs/PARSER_SANDBOX.md.
+    runtime: ${PARSER_RUNTIME:-runc}
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2.0
+    environment:
+      SERVICE_JWT_SECRET: ${SERVICE_JWT_SECRET:?set SERVICE_JWT_SECRET in .env (scripts/setup_demo.sh generates it)}
+      PYTHONDONTWRITEBYTECODE: "1"
 
   compliance:
     build: ./services/compliance
     env_file: ./services/compliance/.env
+    environment:
+      SERVICE_JWT_SECRET: ${SERVICE_JWT_SECRET:?set SERVICE_JWT_SECRET in .env (scripts/setup_demo.sh generates it)}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://siem-forwarder:9880/netaudit.event}
+      # Tamper-evident ledger sealing (docs/LEDGER_INTEGRITY.md). The Ed25519
+      # signing key comes from Vault (LEDGER_SIGNING_KEY) or a mounted file.
+      LEDGER_SIGNING_KEY_FILE: ${LEDGER_SIGNING_KEY_FILE:-}
+      LEDGER_SEAL_INTERVAL_SECONDS: ${LEDGER_SEAL_INTERVAL_SECONDS:-0}
     depends_on:
       opa: {condition: service_healthy}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [audit-net, learning-net]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=2)"]
       interval: 10s
@@ -178,21 +283,26 @@ services:
   compliance-worker:
     build: ./services/compliance
     env_file: ./services/compliance/.env
+    environment:
+      SERVICE_JWT_SECRET: ${SERVICE_JWT_SECRET:?set SERVICE_JWT_SECRET in .env (scripts/setup_demo.sh generates it)}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://siem-forwarder:9880/netaudit.event}
     command: python -m app.worker
     depends_on:
       opa: {condition: service_healthy}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [audit-net, learning-net]
     restart: unless-stopped
 
   learning:
     build: ./services/learning/backend
     profiles: ["advanced"]
     env_file: ./services/learning/.env
+    environment:
+      SERVICE_JWT_SECRET: ${SERVICE_JWT_SECRET:?set SERVICE_JWT_SECRET in .env (scripts/setup_demo.sh generates it)}
     depends_on:
       postgres: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [learning-net]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=2)"]
       interval: 10s
@@ -204,19 +314,27 @@ services:
     build: ./services/learning/backend
     profiles: ["advanced"]
     env_file: ./services/learning/.env
+    environment:
+      SERVICE_JWT_SECRET: ${SERVICE_JWT_SECRET:?set SERVICE_JWT_SECRET in .env (scripts/setup_demo.sh generates it)}
     command: python -m app.unknown_handler
     depends_on:
       redis: {condition: service_healthy}
       postgres: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [learning-net]
     restart: unless-stopped
 
   remediation:
     build: ./services/remediation
     env_file: ./services/remediation/.env
+    environment:
+      SERVICE_JWT_SECRET: ${SERVICE_JWT_SECRET:?set SERVICE_JWT_SECRET in .env (scripts/setup_demo.sh generates it)}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://siem-forwarder:9880/netaudit.event}
+      # Management networks the digital twin must keep reachable (SSH) when it
+      # simulates a fix, e.g. "192.168.50.0/24,10.10.0.0/16" (docs/DIGITAL_TWIN.md).
+      TWIN_PROTECTED_SUBNETS: ${TWIN_PROTECTED_SUBNETS:-}
     depends_on:
       postgres: {condition: service_healthy}
-    networks: [audit-net]
+    networks: [audit-net, learning-net]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=2)"]
       interval: 10s
@@ -227,6 +345,9 @@ services:
   reporting:
     build: ./services/reporting
     env_file: ./services/reporting/.env
+    environment:
+      # Internal time source this report checks its clock against (docs/TIME_SYNC.md).
+      NTP_SERVER: ${NTP_SERVER:-}
     depends_on:
       postgres: {condition: service_healthy}
     volumes:
@@ -243,13 +364,20 @@ services:
     build: ./gateway
     env_file: ./gateway/.env
     environment:
+      SERVICE_JWT_SECRET: ${SERVICE_JWT_SECRET:?set SERVICE_JWT_SECRET in .env (scripts/setup_demo.sh generates it)}
       UPSTREAM_TIMEOUT_SECONDS: "250"
+      # local = users table + gateway-issued JWTs; keycloak = verify Keycloak's
+      # RS256 tokens (start the "iam" profile and set AUTH_PROVIDER=keycloak).
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-local}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: netaudit
+      KEYCLOAK_CLIENT_ID: netaudit-web
     depends_on:
       ingestion: {condition: service_healthy}
       compliance: {condition: service_healthy}
       remediation: {condition: service_healthy}
       reporting: {condition: service_healthy}
-    networks: [audit-net, edge]
+    networks: [audit-net, edge, learning-net]
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
     healthcheck:
@@ -291,5 +419,7 @@ volumes:
   miniodata:
   reportdata:
   neo4jdata:
+  keycloakdata:
+  vaultdata:
   nginxcerts:
   chromadata:

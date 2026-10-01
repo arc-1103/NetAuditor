@@ -6,4 +6,9 @@ banner login ^
 ^
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+no banner login
+end
+write memory

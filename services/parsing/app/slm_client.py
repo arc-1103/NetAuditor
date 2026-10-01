@@ -268,6 +268,7 @@ def _mock_response_worker(text: str, context: DeviceContext) -> SLMResult:
             "detected_os": context.os,
             "detected_os_version": context.os_version,
             "detected_hardware_model": context.hardware_model,
+            "serial_number": context.serial_number,
         },
     }
     fields_found = 0

@@ -19,6 +19,7 @@
         "detected_os": { "type": ["string", "null"], "description": "e.g. 'IOS-XE', 'JunOS', 'PAN-OS'" },
         "detected_os_version": { "type": ["string", "null"] },
         "detected_hardware_model": { "type": ["string", "null"] },
+        "serial_number": { "type": ["string", "null"], "description": "Chassis serial number when the config or pasted show output carries one" },
         "config_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "parsing_confidence": {
           "type": "number",

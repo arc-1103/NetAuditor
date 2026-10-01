@@ -33,6 +33,7 @@ def merge_baselines(
         merged["device"]["detected_os"] = device_context.os
         merged["device"]["detected_os_version"] = device_context.os_version
         merged["device"]["detected_hardware_model"] = device_context.hardware_model
+        merged["device"]["serial_number"] = device_context.serial_number
         if device_context.raw_hostname is not None:
             merged["device"]["raw_hostname"] = device_context.raw_hostname
         # device_context.confidence is the regex fingerprinter's confidence in

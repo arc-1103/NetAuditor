@@ -340,3 +340,40 @@ async def test_anomaly_provider_is_built_once_and_memoized(monkeypatch, baseline
     await evaluator.evaluate_baseline(baseline)
 
     assert len(calls) == 1
+
+
+async def test_a_waived_control_raises_no_new_alert_but_others_still_do(monkeypatch, baseline):
+    """Accepted risk stays in the evidence and the ledger, but must not page anyone again."""
+    from datetime import datetime, timedelta, timezone
+    from app import waivers as w
+
+    identity = baseline["device"]
+    key = w.device_key(identity.get("detected_vendor"), identity.get("raw_hostname"), identity.get("config_sha256"))
+    telnet = {"control_id": "CIS-IOS-1.1.2", "severity": "CRITICAL"}
+    syslog = {"control_id": "CIS-IOS-1.8.1", "severity": "MEDIUM"}
+    _stub_opa(monkeypatch, [telnet, syslog])
+    _stub_persistence(monkeypatch, newly_detected=[telnet, syslog])
+    grant = {"id": "w1", "audit_run_id": RUN_ID, "control_id": "CIS-IOS-1.1.2", "event_type": w.GRANTED, "actor": "admin",
+             "created_at": datetime.now(timezone.utc).isoformat(),
+             "payload": {"waiver_id": "w1", "device_key": key, "reason": "isolated legacy system",
+                         "expires_at": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()}}
+    monkeypatch.setattr(evaluator.db, "get_waiver_events", AsyncMock(return_value=[grant]))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(evaluator.webhooks, "dispatch", dispatch)
+
+    await evaluator.evaluate_baseline(baseline, "CIS", RUN_ID)
+
+    assert [call.args[1]["control_id"] for call in dispatch.await_args_list] == ["CIS-IOS-1.8.1"]
+
+
+async def test_a_failed_waiver_lookup_alerts_as_usual_instead_of_failing_the_evaluation(monkeypatch, baseline):
+    finding = {"control_id": "CIS-IOS-1.1.2", "severity": "CRITICAL"}
+    _stub_opa(monkeypatch, [finding])
+    _stub_persistence(monkeypatch, newly_detected=[finding])
+    monkeypatch.setattr(evaluator.db, "get_waiver_events", AsyncMock(side_effect=RuntimeError("db down")))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(evaluator.webhooks, "dispatch", dispatch)
+
+    await evaluator.evaluate_baseline(baseline, "CIS", RUN_ID)
+
+    dispatch.assert_awaited_once()

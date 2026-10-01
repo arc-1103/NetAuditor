@@ -4,4 +4,10 @@ line vty 0 15
  transport input ssh
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+line vty 0 15
+ transport input telnet ssh
+end
+write memory

@@ -5,8 +5,16 @@ from uuid import uuid4
 
 import chromadb
 from . import db
-from .embeddings import get_embedding_function
-from fastapi import FastAPI, Header, HTTPException
+from .keywords import extract_unfamiliar_keywords
+from .similarity import neighbours
+from .hybrid import fuse
+from .rerank import rerank
+from . import semantic_cache, service_token
+from .access import ADMIN, AccessDenied, backfill, check_tier, scoped, visible_tiers
+from .guardrails import injection_hits, quarantine, sanitize_query
+from .embeddings import embedding_text, get_embedding_function
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sklearn.ensemble import IsolationForest
 
@@ -14,10 +22,41 @@ from sklearn.ensemble import IsolationForest
 app = FastAPI(title="NetAuditor Learning/RAG Service")
 
 
+_OPEN_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def require_service_token(request: Request, call_next):
+    """Every route except /health needs a valid signed token. Identity and role
+    come from its verified claims; a plaintext X-User-* header is never trusted.
+    Fails closed when SERVICE_JWT_SECRET is not configured."""
+    if request.url.path in _OPEN_PATHS:
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    if not os.getenv("SERVICE_JWT_SECRET"):
+        return JSONResponse({"detail": "Service authentication is not configured"}, status_code=503)
+    if not auth.lower().startswith("bearer "):
+        return JSONResponse({"detail": "Missing service token"}, status_code=401)
+    try:
+        request.state.claims = service_token.verify(auth[7:].strip())
+    except service_token.TokenError as exc:
+        return JSONResponse({"detail": f"Invalid service token: {exc}"}, status_code=401)
+    return await call_next(request)
+
+
+def get_claims(request: Request) -> dict:
+    return request.state.claims
+
+
+
 # Configuration
 CHROMADB_HOST = os.getenv("CHROMADB_HOST", "chromadb")
 CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", "8000"))
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
+HYBRID_RETRIEVAL = os.getenv("HYBRID_RETRIEVAL", "true").lower() != "false"
+HYBRID_CANDIDATES = int(os.getenv("HYBRID_CANDIDATES", "50"))
+SEMANTIC_CACHE = os.getenv("SEMANTIC_CACHE_ENABLED", "true").lower() != "false"
+RERANK_ENABLED = os.getenv("RERANK_ENABLED", "false").lower() == "true"
 
 _chroma_client = None
 
@@ -73,9 +112,23 @@ _VENDOR_FINGERPRINT_SEEDS = [
 ]
 
 
+class UnfamiliarKeyword(BaseModel):
+    keyword: str
+    count: int
+    command_position: bool
+    security_related: bool
+    example: str
+
+
 class UnrecognizedBlock(BaseModel):
     block_id: str
     raw_text: str
+    # Command words in this block that the system does not recognize, most
+    # significant first (see app/keywords.py).
+    keywords: List[UnfamiliarKeyword] = Field(default_factory=list)
+    # Top-level config headers (e.g. "interface Gi0/1") the chunker kept together
+    # with this block, so a reviewer sees which parent the commands belong to.
+    sections: List[str] = Field(default_factory=list)
 
 
 class UnknownBlockRequest(BaseModel):
@@ -102,14 +155,18 @@ class LearningMapRequest(BaseModel):
     # a real, live bug.
     vendor: str = "unknown"
     os: str | None = None
+    # public | admin. Proprietary by default: only elevated roles can retrieve it.
+    access_tier: str = ADMIN
 
 
 def get_collection():
     """Connect to ChromaDB and return the learning collection."""
-    return _get_chroma_client().get_or_create_collection(
+    collection = _get_chroma_client().get_or_create_collection(
         name="network_mappings",
         embedding_function=get_embedding_function(),
     )
+    backfill(collection)  # untiered chunks from before access tiers become admin-tier
+    return collection
 
 
 def get_remediation_manual_collection():
@@ -123,10 +180,12 @@ def get_remediation_manual_collection():
     misleading grounding for CLI synthesis, so this starts genuinely empty
     until an admin adds real excerpts.
     """
-    return _get_chroma_client().get_or_create_collection(
+    collection = _get_chroma_client().get_or_create_collection(
         name="remediation_manuals",
         embedding_function=get_embedding_function(),
     )
+    backfill(collection)  # untiered chunks from before access tiers become admin-tier
+    return collection
 
 
 # Sentinel for a missing OS, same reasoning as remediation manuals' ANY_OS:
@@ -147,10 +206,12 @@ def get_baseline_vector_collection():
     metadata filter shape is baked in beyond the plain vendor+os equality
     check_baseline_anomaly already does.
     """
-    return _get_chroma_client().get_or_create_collection(
+    collection = _get_chroma_client().get_or_create_collection(
         name="baseline_vectors",
         embedding_function=get_embedding_function(),
     )
+    backfill(collection)  # untiered chunks from before access tiers become admin-tier
+    return collection
 
 
 # Device-identity fields excluded from the embedded text: they identify
@@ -201,11 +262,12 @@ def get_vendor_fingerprint_collection():
             ids=[f"seed-{vendor}" for vendor, _, _ in _VENDOR_FINGERPRINT_SEEDS],
             documents=[text for _, _, text in _VENDOR_FINGERPRINT_SEEDS],
             metadatas=[
-                {"vendor": vendor, "os": os_name, "seed": True}
+                {"vendor": vendor, "os": os_name, "seed": True, "access_tier": "public"}
                 for vendor, os_name, _ in _VENDOR_FINGERPRINT_SEEDS
             ],
         )
 
+    backfill(collection)
     return collection
 
 
@@ -222,7 +284,32 @@ async def get_learning_queue():
     """
     Return network configuration blocks that need human mapping.
     """
-    return await db.get_pending_blocks()
+    blocks = await db.get_pending_blocks()
+    return [{**block, "keywords": extract_unfamiliar_keywords(block["raw_text"]), "sections": (block.get("chunk_context") or {}).get("sections", [])} for block in blocks]
+
+
+@app.get("/learning/queue/{block_id}/similar")
+async def similar_confirmed_mappings(block_id: str, limit: int = 40, claims: dict = Depends(get_claims)):
+    """How an unrecognised block relates to what humans have already taught the
+    system: cosine similarity to each confirmed mapping plus a 2-D PCA
+    projection for plotting (app/similarity.py). Only real, confirmed mappings
+    are ever returned."""
+    block = next((b for b in await db.get_pending_blocks() if b["block_id"] == block_id), None)
+    if block is None:
+        raise HTTPException(status_code=404, detail=f"No pending block {block_id}")
+    try:
+        embed = get_embedding_function()
+        query_vector = embed([embedding_text(block)])[0]
+        stored = scoped(get_collection(), claims).get(include=["embeddings", "metadatas"], limit=max(1, min(limit, 200)))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"ChromaDB unavailable: {exc}")
+    embeddings = stored.get("embeddings")
+    confirmed = [
+        {"id": stored["ids"][i], "vector": list(embeddings[i]), "metadata": (stored.get("metadatas") or [{}] * len(stored["ids"]))[i]}
+        for i in range(len(stored["ids"]))
+    ] if embeddings is not None else []
+    return {"block_id": block_id, **neighbours(list(query_vector), confirmed, limit=limit),
+            "method": "cosine similarity between embeddings; 2-D view is a PCA projection"}
 
 
 @app.post("/learning/queue")
@@ -239,7 +326,7 @@ async def enqueue_unknown_block(body: UnknownBlockRequest):
 @app.post("/learning/map")
 async def submit_learning_map(
     body: LearningMapRequest,
-    x_user_id: str | None = Header(default=None),
+    claims: dict = Depends(get_claims),
 ):
     """
     Store a confirmed CLI-to-security-field mapping.
@@ -248,14 +335,22 @@ async def submit_learning_map(
     be retrieved by the RAG system.
     """
 
-    if not x_user_id:
-        raise HTTPException(
-            status_code=400,
-            detail="X-User-Id header is required",
-        )
+    # Identity and authority come from the verified token, not from a header.
+    if claims.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only an admin may confirm a mapping")
+    x_user_id = claims["sub"]
 
     try:
-        collection = get_collection()
+        check_tier(body.access_tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    poisoned = injection_hits(" ".join([body.cli_pattern, body.field, body.value]))
+    if poisoned:
+        # Stored text is later fed to the model as trusted grounding; refuse it at the door.
+        raise HTTPException(status_code=422, detail=f"Mapping rejected: contains prompt-injection text {poisoned}")
+
+    try:
+        collection = scoped(get_collection(), claims)
 
         document = (
             f"CLI pattern: {body.cli_pattern}\n"
@@ -271,6 +366,7 @@ async def submit_learning_map(
             "confirmed_by": x_user_id,
             "vendor": body.vendor,
             "os": body.os or UNKNOWN_OS,
+            "access_tier": body.access_tier,
         }
 
         collection.upsert(
@@ -278,7 +374,10 @@ async def submit_learning_map(
             documents=[document],
             metadatas=[metadata],
         )
+        semantic_cache.clear()  # a new confirmed mapping must show up in the next search
 
+    except AccessDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -300,7 +399,7 @@ class VendorLookupRequest(BaseModel):
 
 
 @app.post("/learning/vendor-lookup")
-def lookup_vendor(body: VendorLookupRequest):
+def lookup_vendor(body: VendorLookupRequest, claims: dict = Depends(get_claims)):
     """
     Best-effort semantic vendor guess for a config sample regex detection
     couldn't identify. Called by Parsing only to enrich a human_review
@@ -309,7 +408,7 @@ def lookup_vendor(body: VendorLookupRequest):
     verdict.
     """
     try:
-        collection = get_vendor_fingerprint_collection()
+        collection = scoped(get_vendor_fingerprint_collection(), claims)
         results = collection.query(query_texts=[body.text], n_results=1)
     except Exception as exc:
         raise HTTPException(
@@ -338,10 +437,11 @@ class VendorFingerprintRequest(BaseModel):
     vendor: str
     os: str | None = None
     sample_text: str
+    access_tier: str = ADMIN
 
 
 @app.post("/learning/vendor-fingerprints")
-def add_vendor_fingerprint(body: VendorFingerprintRequest):
+def add_vendor_fingerprint(body: VendorFingerprintRequest, claims: dict = Depends(get_claims)):
     """
     Add a human-confirmed vendor sample to the fingerprint collection, so the
     next unrecognized device from the same vendor gets a semantic match
@@ -349,12 +449,12 @@ def add_vendor_fingerprint(body: VendorFingerprintRequest):
     action; no caller exists yet.
     """
     try:
-        collection = get_vendor_fingerprint_collection()
+        collection = scoped(get_vendor_fingerprint_collection(), claims)
         fingerprint_id = f"confirmed-{uuid4()}"
         collection.upsert(
             ids=[fingerprint_id],
             documents=[body.sample_text],
-            metadatas=[{"vendor": body.vendor, "os": body.os or UNKNOWN_OS, "seed": False}],
+            metadatas=[{"vendor": body.vendor, "os": body.os or UNKNOWN_OS, "seed": False, "access_tier": body.access_tier}],
         )
     except Exception as exc:
         raise HTTPException(
@@ -370,6 +470,7 @@ class RemediationManualRequest(BaseModel):
     os: str | None = None
     control_id: str
     manual_excerpt: str
+    access_tier: str = ADMIN
 
 
 #: Sentinel stored in place of a missing `os`, never `None` — ChromaDB
@@ -380,7 +481,7 @@ ANY_OS = "any"
 
 
 @app.post("/learning/remediation-manuals")
-def add_remediation_manual(body: RemediationManualRequest):
+def add_remediation_manual(body: RemediationManualRequest, claims: dict = Depends(get_claims)):
     """
     Add a vendor remediation-manual excerpt for one control, so the agentic
     RAG remediation fallback (services/remediation/app/rag_remediation.py)
@@ -390,12 +491,12 @@ def add_remediation_manual(body: RemediationManualRequest):
     """
     os_key = body.os or ANY_OS
     try:
-        collection = get_remediation_manual_collection()
+        collection = scoped(get_remediation_manual_collection(), claims)
         manual_id = f"{body.vendor}:{os_key}:{body.control_id}"
         collection.upsert(
             ids=[manual_id],
             documents=[body.manual_excerpt],
-            metadatas=[{"vendor": body.vendor, "os": os_key, "control_id": body.control_id}],
+            metadatas=[{"vendor": body.vendor, "os": os_key, "control_id": body.control_id, "access_tier": body.access_tier}],
         )
     except Exception as exc:
         raise HTTPException(
@@ -413,7 +514,7 @@ class RemediationManualLookupRequest(BaseModel):
 
 
 @app.post("/learning/remediation-manuals/search")
-def search_remediation_manual(body: RemediationManualLookupRequest):
+def search_remediation_manual(body: RemediationManualLookupRequest, claims: dict = Depends(get_claims)):
     """
     Exact-match lookup by [control_id + vendor + OS] — a Rule ID's
     remediation steps either apply to this exact vendor/OS or they don't, so
@@ -440,7 +541,7 @@ def search_remediation_manual(body: RemediationManualLookupRequest):
     }
 
     try:
-        collection = get_remediation_manual_collection()
+        collection = scoped(get_remediation_manual_collection(), claims)
         results = collection.get(where=where)
     except Exception as exc:
         raise HTTPException(
@@ -459,29 +560,54 @@ class RAGSearchRequest(BaseModel):
 
 
 @app.post("/learning/search")
-def search_learning(body: RAGSearchRequest):
+def search_learning(body: RAGSearchRequest, claims: dict = Depends(get_claims)):
     # Never an open-ended search across every vendor's confirmed mappings
-    # at once — pre-filter before similarity search runs, same principle
+    # at once � pre-filter before similarity search runs, same principle
     # remediation-manual lookup and anomaly-cohort selection already apply.
     # No vendor known (an old caller, or a genuinely unclassified device)
-    # is the one case left unfiltered.
+    # is the one case left unfiltered by vendor. The access-level filter is
+    # always applied.
+    tiers = visible_tiers(claims)
     where = None
     if body.vendor:
         os_values = [body.os, UNKNOWN_OS] if body.os else [UNKNOWN_OS]
         where = {"$and": [{"vendor": body.vendor}, {"os": {"$in": os_values}}]}
 
+    clean_query, guard_flags = sanitize_query(body.query)
+    body = body.model_copy(update={"query": clean_query})
+
     try:
-        collection = get_collection()
+        collection = scoped(get_collection(), claims)  # adds the access_tier pre-filter to every query
+        scope = (body.vendor, body.os, tuple(tiers))
+        vector = None
+        if SEMANTIC_CACHE:
+            try:
+                vector = get_embedding_function()([body.query])[0]
+                cached = semantic_cache.lookup(body.query, vector, scope)
+                if cached is not None:
+                    return {"query": body.query, "results": cached, "cache": "semantic_hit",
+                            "guardrail": {"query_flags": guard_flags, "quarantined": 0, "visible_tiers": tiers}}
+            except Exception:
+                vector = None  # cache is an optimisation; never block a search on it
 
-        results = collection.query(
-            query_texts=[body.query],
-            n_results=RAG_TOP_K,
-            where=where,
-        )
+        if HYBRID_RETRIEVAL or RERANK_ENABLED:
+            # Wide dense candidate set, then optional BM25 + RRF fusion and an
+            # optional cross-encoder, trimmed to top-K at the last stage.
+            results = collection.query(query_texts=[body.query], n_results=HYBRID_CANDIDATES, where=where)
+            if HYBRID_RETRIEVAL:
+                results = fuse(results, body.query, HYBRID_CANDIDATES if RERANK_ENABLED else RAG_TOP_K)
+            if RERANK_ENABLED:
+                results = rerank(results, body.query, RAG_TOP_K)
+        else:
+            results = collection.query(query_texts=[body.query], n_results=RAG_TOP_K, where=where)
 
+        results, quarantined = quarantine(results)
+        if vector is not None:
+            semantic_cache.store(body.query, vector, scope, results)
         return {
             "query": body.query,
             "results": results,
+            "guardrail": {"query_flags": guard_flags, "quarantined": quarantined, "visible_tiers": tiers},
         }
 
     except Exception as exc:
@@ -496,10 +622,11 @@ class BaselineVectorRequest(BaseModel):
     vendor: str
     os: str | None = None
     baseline: dict = Field(default_factory=dict)
+    access_tier: str = ADMIN
 
 
 @app.post("/learning/baseline-vectors")
-def ingest_baseline_vector(body: BaselineVectorRequest):
+def ingest_baseline_vector(body: BaselineVectorRequest, claims: dict = Depends(get_claims)):
     """
     Embed and store one evaluated baseline for unsupervised semantic anomaly
     detection (services/compliance/app/anomaly_client.py). Called for every
@@ -509,11 +636,11 @@ def ingest_baseline_vector(body: BaselineVectorRequest):
     accumulating duplicates.
     """
     try:
-        collection = get_baseline_vector_collection()
+        collection = scoped(get_baseline_vector_collection(), claims)
         collection.upsert(
             ids=[body.config_sha256],
             documents=[flatten_baseline_for_embedding(body.baseline)],
-            metadatas=[{"vendor": body.vendor, "os": body.os or UNKNOWN_OS}],
+            metadatas=[{"vendor": body.vendor, "os": body.os or UNKNOWN_OS, "access_tier": body.access_tier}],
         )
     except Exception as exc:
         raise HTTPException(
@@ -531,7 +658,7 @@ class AnomalyCheckRequest(BaseModel):
 
 
 @app.post("/learning/baseline-vectors/anomaly-check")
-def check_baseline_anomaly(body: AnomalyCheckRequest):
+def check_baseline_anomaly(body: AnomalyCheckRequest, claims: dict = Depends(get_claims)):
     """
     Flag "configuration drift": is this device's embedding an outlier
     relative to its vendor+OS peer cohort's embeddings?
@@ -553,7 +680,7 @@ def check_baseline_anomaly(body: AnomalyCheckRequest):
     Anomaly Detection section for why.
     """
     try:
-        collection = get_baseline_vector_collection()
+        collection = scoped(get_baseline_vector_collection(), claims)
         target = collection.get(ids=[body.config_sha256], include=["embeddings"])
         target_embeddings = target.get("embeddings")
         if target_embeddings is None or len(target_embeddings) == 0:

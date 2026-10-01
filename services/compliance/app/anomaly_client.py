@@ -32,6 +32,8 @@ from typing import Any, Protocol
 
 import httpx
 
+from app import service_token
+
 
 class AnomalyDetectionProvider(Protocol):
     async def ingest(self, baseline: dict[str, Any]) -> None:
@@ -68,7 +70,7 @@ class LearningAnomalyDetectionProvider:
         config_sha256 = device.get("config_sha256")
         if not config_sha256:
             return
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, headers=service_token.auth_headers("compliance", "svc:compliance", "service_worker")) as client:
             response = await client.post(
                 f"{self.base_url}/learning/baseline-vectors",
                 json={
@@ -85,7 +87,7 @@ class LearningAnomalyDetectionProvider:
         config_sha256 = device.get("config_sha256")
         if not config_sha256:
             return {"status": "unavailable"}
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, headers=service_token.auth_headers("compliance", "svc:compliance", "service_worker")) as client:
             response = await client.post(
                 f"{self.base_url}/learning/baseline-vectors/anomaly-check",
                 json={

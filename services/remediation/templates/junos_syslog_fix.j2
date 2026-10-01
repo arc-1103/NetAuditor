@@ -4,3 +4,9 @@ configure
 set system syslog host {{ syslog_host | default('10.0.0.10') }} any info
 commit check
 commit
+@@ROLLBACK@@
+# Rollback: restores the pre-fix state (re-introduces the finding)
+configure
+rollback 1
+commit check
+commit

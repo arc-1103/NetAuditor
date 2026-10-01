@@ -21,7 +21,7 @@ import os
 
 from celery import Celery
 
-from app import db
+from app import db, service_token
 
 celery_app = Celery("learning", broker=os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
 
@@ -45,6 +45,16 @@ def receive_unknown_block(block: dict) -> dict:
     with no audit_run_id can never be traced back to the device it came
     from, and one with no block_id can't be deduplicated on resubmission.
     """
+    # The task arrives through Redis, not the authenticated HTTP path, so it
+    # carries its own signed context: only an internal service principal may
+    # enqueue blocks for human mapping.
+    try:
+        claims = service_token.verify(str(block.get("context_token") or ""))
+    except service_token.TokenError as exc:
+        raise ValueError(f"learning.receive_unknown_block rejected: {exc}") from exc
+    if claims.get("role") != "service_worker":
+        raise ValueError("learning.receive_unknown_block requires a service_worker context")
+
     block_id = block.get("block_id")
     if not block_id:
         raise ValueError("learning.receive_unknown_block requires 'block_id'")

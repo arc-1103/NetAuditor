@@ -35,10 +35,10 @@ async def save_proposal(proposal: dict) -> None:
                 INSERT INTO remediation_proposals
                     (audit_run_id, control_id, template_name, script, rollback_script, source,
                      preflight_status, risk_flags, decision_action, decision_rule_id,
-                     decision_ruleset_version, risk_tier, blast_radius_count, approval_status, updated_at)
+                     decision_ruleset_version, risk_tier, blast_radius_count, approval_status, twin, updated_at)
                 VALUES (:audit_run_id, :control_id, :template_name, :script, :rollback_script, :source,
                         :preflight_status, :risk_flags, :decision_action, :decision_rule_id,
-                        :decision_ruleset_version, :risk_tier, :blast_radius_count, 'PENDING', :updated_at)
+                        :decision_ruleset_version, :risk_tier, :blast_radius_count, 'PENDING', :twin, :updated_at)
                 ON CONFLICT (audit_run_id, control_id) DO UPDATE SET
                     template_name = EXCLUDED.template_name,
                     script = EXCLUDED.script,
@@ -51,6 +51,7 @@ async def save_proposal(proposal: dict) -> None:
                     decision_ruleset_version = EXCLUDED.decision_ruleset_version,
                     risk_tier = EXCLUDED.risk_tier,
                     blast_radius_count = EXCLUDED.blast_radius_count,
+                    twin = EXCLUDED.twin,
                     approval_status = 'PENDING', approved_by = NULL,
                     approval_comment = NULL, approved_at = NULL,
                     applied_at = NULL, rollback_status = 'NONE',
@@ -67,6 +68,7 @@ async def save_proposal(proposal: dict) -> None:
                 "decision_ruleset_version": decision.get("ruleset_version"),
                 "risk_tier": decision.get("risk"),
                 "blast_radius_count": decision.get("blast_radius_count", 0),
+                "twin": json.dumps(proposal["twin"]) if proposal.get("twin") is not None else None,
                 "updated_at": datetime.now(timezone.utc),
             },
         )
@@ -203,7 +205,7 @@ async def get_proposal(audit_run_id: str, control_id: str) -> dict | None:
                        preflight_status, risk_flags, decision_action, decision_rule_id,
                        decision_ruleset_version, risk_tier, blast_radius_count, approval_status,
                        approved_by, approval_comment, approved_at, pre_change_baseline_sha256,
-                       applied_at, rollback_status
+                       applied_at, rollback_status, twin
                 FROM remediation_proposals WHERE audit_run_id=:run_id AND control_id=:control_id
             """),
             {"run_id": audit_run_id, "control_id": control_id},
@@ -267,12 +269,22 @@ async def get_proposals(audit_run_id: str) -> list[dict]:
                        preflight_status, risk_flags, decision_action, decision_rule_id,
                        decision_ruleset_version, risk_tier, blast_radius_count, approval_status,
                        approved_by, approval_comment, approved_at, pre_change_baseline_sha256,
-                       applied_at, rollback_status, updated_at
+                       applied_at, rollback_status, twin, updated_at
                 FROM remediation_proposals WHERE audit_run_id=:run_id
                 ORDER BY control_id
             """), {"run_id": audit_run_id}
         )).mappings().all()
     return [_jsonable(row) for row in rows]
+
+
+async def get_run_baseline(audit_run_id: str) -> dict | None:
+    """The normalized baseline the run was evaluated on — the digital twin's model of the device."""
+    async with async_session() as session:
+        row = (await session.execute(
+            text("SELECT baseline_snapshot FROM audit_runs WHERE id=:run_id"), {"run_id": audit_run_id},
+        )).first()
+    snapshot = row[0] if row else None
+    return json.loads(snapshot) if isinstance(snapshot, str) else snapshot
 
 
 async def get_findings(audit_run_id: str) -> list[dict]:
@@ -356,4 +368,6 @@ def _jsonable(row) -> dict:
         value["risk_flags"] = json.loads(value["risk_flags"])
     if isinstance(value.get("blast_radius"), str):
         value["blast_radius"] = json.loads(value["blast_radius"])
+    if isinstance(value.get("twin"), str):
+        value["twin"] = json.loads(value["twin"])
     return value

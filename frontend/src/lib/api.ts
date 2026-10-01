@@ -1,5 +1,5 @@
 import { mockAudit, mockExecutiveReport, mockLearningQueue, mockProvenance, mockRemediations, mockTrustView } from "./mock";
-import type { AuditRun, ExecutiveReport, FixSimulation, LearningQueueItem, ProvenanceChain, Remediation, TopologyGraph, TrustView } from "./types";
+import type { KnowledgeSearchResult, Waiver, AuditRun, DeviceHistory, DriftResult, RiskMap, SimilarMappings, ExecutiveReport, FixSimulation, LearningQueueItem, ProvenanceChain, Remediation, TopologyGraph, TrustView } from "./types";
 
 export type Role = "admin" | "operator" | "auditor";
 
@@ -71,6 +71,15 @@ export async function uploadConfig(file: File, token: string) {
   return request<{ job_id: string; status: string }>("/api/upload", token, { method: "POST", body: form });
 }
 
+export interface CollectTarget { host: string; device_type: string; username: string; password: string; port: number; method: "netmiko" | "napalm"; }
+
+export async function collectConfig(target: CollectTarget, token: string) {
+  if (USE_MOCK) throw new Error("Online collection needs a live backend — not available in demo mode");
+  return request<{ job_id: string; status: string }>("/api/collect", token, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(target),
+  });
+}
+
 export async function getAudit(runId: string, token: string): Promise<AuditRun> {
   if (USE_MOCK) { await wait(1050); return { ...structuredClone(mockAudit), id: runId }; }
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -79,6 +88,11 @@ export async function getAudit(runId: string, token: string): Promise<AuditRun> 
     await wait(1500);
   }
   throw new Error("The audit is still processing. Reopen it from audit history shortly.");
+}
+
+export async function listAuditRunIds(token: string, limit = 20): Promise<string[]> {
+  if (USE_MOCK) return [];
+  return (await request<{ run_ids: string[] }>(`/api/audit-runs?limit=${limit}`, token)).run_ids;
 }
 
 export async function generateRemediations(runId: string, token: string): Promise<Remediation[]> {
@@ -194,7 +208,7 @@ export async function getLearningQueue(token: string): Promise<LearningQueueItem
   return request<LearningQueueItem[]>("/api/learning/queue", token);
 }
 
-export interface LearningMapInput { block_id: string; cli_pattern: string; field: string; value: string; vendor?: string; os?: string | null; }
+export interface LearningMapInput { block_id: string; cli_pattern: string; field: string; value: string; vendor?: string; os?: string | null; access_tier?: "public" | "admin"; }
 
 export async function submitLearningMap(input: LearningMapInput, token: string): Promise<{ confirmed: boolean; block_id: string; was_queued: boolean }> {
   if (USE_MOCK) {
@@ -206,6 +220,20 @@ export async function submitLearningMap(input: LearningMapInput, token: string):
   return request(`/api/learning/map`, token, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   });
+}
+
+export async function searchKnowledge(body: { query: string; vendor?: string; os?: string }, token: string): Promise<KnowledgeSearchResult> {
+  if (USE_MOCK) { await wait(300); return { query: body.query, matches: [], guardrail: { query_flags: [], quarantined: 0, visible_tiers: ["public"] } }; }
+  const raw = await request<{ results: { ids?: string[][]; documents?: string[][]; metadatas?: Array<Array<Record<string, string | number> | null>>; distances?: number[][]; fusion_scores?: number[][]; rerank_scores?: number[][]; retrieval?: string; rerank?: string }; guardrail?: KnowledgeSearchResult["guardrail"]; cache?: string }>(
+    "/api/learning/search", token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = raw.results || {};
+  const ids = r.ids?.[0] || [];
+  return {
+    query: body.query,
+    cache: raw.cache, retrieval: r.retrieval, rerank: r.rerank,
+    guardrail: raw.guardrail || { query_flags: [], quarantined: 0, visible_tiers: [] },
+    matches: ids.map((id, i) => ({ id, document: r.documents?.[0]?.[i] || "", metadata: r.metadatas?.[0]?.[i] || {}, distance: r.distances?.[0]?.[i], fusion: r.fusion_scores?.[0]?.[i], rerank: r.rerank_scores?.[0]?.[i] })),
+  };
 }
 
 export async function getExecutiveReport(token: string): Promise<ExecutiveReport> {
@@ -221,6 +249,64 @@ export async function getAuditTrust(runId: string, token: string): Promise<Trust
 export async function simulateFix(runId: string, controlId: string, token: string): Promise<FixSimulation> {
   if (USE_MOCK) throw new Error("Fix simulation needs a live backend — not available in demo mode");
   return request<FixSimulation>(`/api/audit-runs/${runId}/counterfactual/${encodeURIComponent(controlId)}`, token);
+}
+
+export async function getHistory(runId: string, token: string): Promise<DeviceHistory> {
+  if (USE_MOCK) return { runs: [], transitions: [], control_streaks: {} };
+  return request<DeviceHistory>(`/api/audit-runs/${runId}/history`, token);
+}
+
+export interface TimeStatus { state: "OK" | "DRIFT" | "UNAVAILABLE" | "NOT_CONFIGURED"; server?: string; offset_seconds?: number; stratum?: number; }
+
+export async function getTimeStatus(token: string): Promise<TimeStatus> {
+  if (USE_MOCK) return { state: "NOT_CONFIGURED" };
+  return request<TimeStatus>("/api/time-status", token);
+}
+
+export async function getDrift(runId: string, controlId: string, token: string): Promise<DriftResult> {
+  if (USE_MOCK) throw new Error("Drift comparison needs a live backend — not available in demo mode");
+  return request<DriftResult>(`/api/audit-runs/${runId}/drift/${encodeURIComponent(controlId)}`, token);
+}
+
+export interface LedgerStatus { signing_configured: boolean; key_id: string | null; events: number; sealed_events: number; unsealed_events: number; seals: number; head: { seq: number; hash: string } | null; }
+export interface LedgerVerification { ok: boolean; seals: number; events_sealed: number; unsealed_events: number; problems: Array<{ seal: number; kind: string; detail: string }>; head: { seq: number; hash: string } | null; }
+
+export async function getLedgerStatus(token: string): Promise<LedgerStatus> {
+  if (USE_MOCK) throw new Error("The ledger needs a live backend — not available in demo mode");
+  return request<LedgerStatus>("/api/ledger/status", token);
+}
+export async function verifyLedger(token: string): Promise<LedgerVerification> {
+  return request<LedgerVerification>("/api/ledger/verify", token);
+}
+export async function getLedgerProof(eventId: string, token: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/ledger/proof/${encodeURIComponent(eventId)}`, token);
+}
+export async function sealLedger(token: string): Promise<{ sealed: number; seq?: number }> {
+  return request<{ sealed: number; seq?: number }>("/api/ledger/seal", token, { method: "POST" });
+}
+
+export async function listWaivers(token: string): Promise<Waiver[]> {
+  if (USE_MOCK) return [];
+  return (await request<{ waivers: Waiver[] }>("/api/waivers", token)).waivers;
+}
+
+export async function grantWaiver(body: { audit_run_id: string; control_id: string; reason: string; expires_at: string; ticket?: string }, token: string): Promise<Waiver> {
+  if (USE_MOCK) throw new Error("Waivers need a live backend — not available in demo mode");
+  return request<Waiver>("/api/waivers", token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+export async function revokeWaiver(waiverId: string, reason: string, token: string): Promise<Waiver> {
+  return request<Waiver>(`/api/waivers/${encodeURIComponent(waiverId)}/revoke`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+}
+
+export async function getFleetTopology(token: string): Promise<RiskMap> {
+  if (USE_MOCK) return { nodes: [], edges: [], highlight: null, note: "The fleet topology needs a live backend." };
+  return request<RiskMap>("/api/topology/fleet", token);
+}
+
+export async function getSimilarMappings(blockId: string, token: string): Promise<SimilarMappings> {
+  if (USE_MOCK) throw new Error("Similarity needs a live backend — not available in demo mode");
+  return request<SimilarMappings>(`/api/learning/queue/${encodeURIComponent(blockId)}/similar`, token);
 }
 
 export async function getTopology(runId: string, token: string): Promise<TopologyGraph> {

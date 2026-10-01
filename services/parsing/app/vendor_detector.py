@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from .device_identity import extract_identity
 from .models import DeviceContext, VendorDetection
 
 # Best-effort labels only — see worker.py. Vendor identity no longer gates
@@ -93,9 +94,13 @@ def detect_vendor(text: str) -> VendorDetection:
             tuple(evidence),
         )
 
-    version = _extract_version(text, vendor)
+    identity = extract_identity(text)
+    version = _extract_version(text, vendor) or identity["header_version"]
     hostname = _extract_hostname(text, vendor)
-    return VendorDetection(vendor, os_name, version, hostname, None, score, tuple(evidence))
+    return VendorDetection(
+        vendor, os_name, version, hostname, identity["hardware_model"], score, tuple(evidence),
+        serial_number=identity["serial_number"],
+    )
 
 
 def detect_job_context(
@@ -129,6 +134,7 @@ def detect_job_context(
         hardware_model=detection.hardware_model,
         confidence=detection.confidence,
         evidence=detection.evidence,
+        serial_number=detection.serial_number,
     )
 
 

@@ -4,3 +4,9 @@ configure
 set system login message "{{ login_banner | default('Authorized access only. Activity may be monitored and reported.') }}"
 commit check
 commit
+@@ROLLBACK@@
+# Rollback: restores the pre-fix state (re-introduces the finding)
+configure
+rollback 1
+commit check
+commit

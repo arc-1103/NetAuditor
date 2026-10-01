@@ -4,6 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
+SVC = {"sub": "svc:test", "role": "service_worker"}  # verified claims the middleware would supply
+BOTH = {"access_tier": {"$in": ["public", "admin"]}}
+
 from app.main import (
     AnomalyCheckRequest,
     BaselineVectorRequest,
@@ -56,7 +59,7 @@ class TestLearningService(unittest.TestCase):
             return_value=True,
         ) as mark_mapped:
             result = asyncio.run(
-                submit_learning_map(request, "test-user")
+                submit_learning_map(request, {"sub": "test-user", "role": "admin"})
             )
 
         self.assertTrue(result["confirmed"])
@@ -83,7 +86,7 @@ class TestLearningService(unittest.TestCase):
             return_value=False,
         ):
             result = asyncio.run(
-                submit_learning_map(request, "test-user")
+                submit_learning_map(request, {"sub": "test-user", "role": "admin"})
             )
 
         self.assertTrue(result["confirmed"])
@@ -139,12 +142,15 @@ class TestLearningService(unittest.TestCase):
     def test_get_learning_queue_reads_from_db(self):
         with patch(
             "app.main.db.get_pending_blocks",
-            return_value=[{"block_id": "a", "raw_text": "text-a"}],
+            return_value=[{"block_id": "a", "raw_text": "ztna-gateway enable"}],
         ) as get_pending_blocks:
             result = asyncio.run(get_learning_queue())
 
         get_pending_blocks.assert_called_once_with()
-        self.assertEqual(result, [{"block_id": "a", "raw_text": "text-a"}])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["block_id"], "a")
+        self.assertEqual(result[0]["raw_text"], "ztna-gateway enable")
+        self.assertEqual([k["keyword"] for k in result[0]["keywords"]], ["ztna-gateway"])
 
     def test_enqueue_unknown_block(self):
         request = UnknownBlockRequest(
@@ -178,7 +184,7 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_vendor_fingerprint_collection",
             return_value=fake_collection,
         ):
-            result = lookup_vendor(VendorLookupRequest(text="hostname EDGE-RTR\nip ssh version 2"))
+            result = lookup_vendor(VendorLookupRequest(text="hostname EDGE-RTR\nip ssh version 2"), SVC)
 
         self.assertEqual(result["vendor"], "cisco")
         self.assertEqual(result["os"], "IOS-XE")
@@ -189,14 +195,14 @@ class TestLearningService(unittest.TestCase):
         fake_collection.query.return_value = {
             "ids": [["seed-cisco"]],
             "distances": [[5.0]],
-            "metadatas": [[{"vendor": "cisco", "os": "IOS-XE"}]],
+            "metadatas": [[{"vendor": "cisco", "os": "IOS-XE", "access_tier": "admin"}]],
         }
 
         with patch(
             "app.main.get_vendor_fingerprint_collection",
             return_value=fake_collection,
         ):
-            result = lookup_vendor(VendorLookupRequest(text="some unrelated text"))
+            result = lookup_vendor(VendorLookupRequest(text="some unrelated text"), SVC)
 
         self.assertIsNone(result["vendor"])
 
@@ -208,7 +214,7 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_vendor_fingerprint_collection",
             return_value=fake_collection,
         ):
-            result = lookup_vendor(VendorLookupRequest(text="anything"))
+            result = lookup_vendor(VendorLookupRequest(text="anything"), SVC)
 
         self.assertIsNone(result["vendor"])
 
@@ -225,12 +231,12 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_vendor_fingerprint_collection",
             return_value=fake_collection,
         ):
-            result = add_vendor_fingerprint(request)
+            result = add_vendor_fingerprint(request, SVC)
 
         self.assertEqual(result, {"stored": True, "vendor": "fortinet"})
         fake_collection.upsert.assert_called_once()
         _, kwargs = fake_collection.upsert.call_args
-        self.assertEqual(kwargs["metadatas"], [{"vendor": "fortinet", "os": "FortiOS", "seed": False}])
+        self.assertEqual(kwargs["metadatas"], [{"vendor": "fortinet", "os": "FortiOS", "seed": False, "access_tier": "admin"}])
 
     def test_add_vendor_fingerprint_defaults_os_to_unknown_sentinel_never_none(self):
         """ChromaDB rejects a None metadata value outright, so a missing os
@@ -247,11 +253,11 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_vendor_fingerprint_collection",
             return_value=fake_collection,
         ):
-            result = add_vendor_fingerprint(request)
+            result = add_vendor_fingerprint(request, SVC)
 
         self.assertEqual(result, {"stored": True, "vendor": "fortinet"})
         _, kwargs = fake_collection.upsert.call_args
-        self.assertEqual(kwargs["metadatas"], [{"vendor": "fortinet", "os": "unknown", "seed": False}])
+        self.assertEqual(kwargs["metadatas"], [{"vendor": "fortinet", "os": "unknown", "seed": False, "access_tier": "admin"}])
         self.assertNotIn(None, kwargs["metadatas"][0].values())
 
     def test_add_remediation_manual_stores_excerpt(self):
@@ -268,7 +274,7 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_remediation_manual_collection",
             return_value=fake_collection,
         ):
-            result = add_remediation_manual(request)
+            result = add_remediation_manual(request, SVC)
 
         self.assertTrue(result["stored"])
         self.assertEqual(result["manual_id"], "fortinet:FortiOS:CIS-FORTI-1.1.1")
@@ -276,7 +282,7 @@ class TestLearningService(unittest.TestCase):
         _, kwargs = fake_collection.upsert.call_args
         self.assertEqual(
             kwargs["metadatas"],
-            [{"vendor": "fortinet", "os": "FortiOS", "control_id": "CIS-FORTI-1.1.1"}],
+            [{"vendor": "fortinet", "os": "FortiOS", "control_id": "CIS-FORTI-1.1.1", "access_tier": "admin"}],
         )
 
     def test_search_remediation_manual_returns_exact_matches(self):
@@ -291,20 +297,18 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_remediation_manual_collection",
             return_value=fake_collection,
         ):
-            result = search_remediation_manual(request)
+            result = search_remediation_manual(request, SVC)
 
         self.assertTrue(result["found"])
         self.assertEqual(len(result["manual_excerpts"]), 1)
         # A known-OS lookup matches that exact OS plus vendor-wide ("any")
         # guidance — never a wildcard match against every OS.
         fake_collection.get.assert_called_once_with(
-            where={
-                "$and": [
-                    {"vendor": "fortinet"},
-                    {"control_id": "CIS-FORTI-1.1.1"},
-                    {"os": {"$in": ["FortiOS", "any"]}},
-                ]
-            }
+            where={"$and": [BOTH, {"$and": [
+                {"vendor": "fortinet"},
+                {"control_id": "CIS-FORTI-1.1.1"},
+                {"os": {"$in": ["FortiOS", "any"]}},
+            ]}]}
         )
 
     def test_search_remediation_manual_with_unknown_os_only_matches_any_tagged_excerpts(self):
@@ -319,18 +323,16 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_remediation_manual_collection",
             return_value=fake_collection,
         ):
-            result = search_remediation_manual(request)
+            result = search_remediation_manual(request, SVC)
 
         self.assertFalse(result["found"])
         self.assertEqual(result["manual_excerpts"], [])
         fake_collection.get.assert_called_once_with(
-            where={
-                "$and": [
-                    {"vendor": "cisco"},
-                    {"control_id": "CIS-IOS-9.9.9"},
-                    {"os": {"$in": ["any"]}},
-                ]
-            }
+            where={"$and": [BOTH, {"$and": [
+                {"vendor": "cisco"},
+                {"control_id": "CIS-IOS-9.9.9"},
+                {"os": {"$in": ["any"]}},
+            ]}]}
         )
 
     def test_add_remediation_manual_defaults_os_to_any_sentinel_never_none(self):
@@ -346,13 +348,13 @@ class TestLearningService(unittest.TestCase):
             "app.main.get_remediation_manual_collection",
             return_value=fake_collection,
         ):
-            result = add_remediation_manual(request)
+            result = add_remediation_manual(request, SVC)
 
         self.assertEqual(result["manual_id"], "cisco:any:CIS-IOS-1.1.1")
         _, kwargs = fake_collection.upsert.call_args
         self.assertEqual(
             kwargs["metadatas"],
-            [{"vendor": "cisco", "os": "any", "control_id": "CIS-IOS-1.1.1"}],
+            [{"vendor": "cisco", "os": "any", "control_id": "CIS-IOS-1.1.1", "access_tier": "admin"}],
         )
 
     # ── Unsupervised semantic anomaly detection ──────────────────────
@@ -389,12 +391,12 @@ class TestLearningService(unittest.TestCase):
         )
 
         with patch("app.main.get_baseline_vector_collection", return_value=fake_collection):
-            result = ingest_baseline_vector(request)
+            result = ingest_baseline_vector(request, SVC)
 
         self.assertTrue(result["stored"])
         _, kwargs = fake_collection.upsert.call_args
         self.assertEqual(kwargs["ids"], ["a" * 64])
-        self.assertEqual(kwargs["metadatas"], [{"vendor": "cisco", "os": "IOS-XE"}])
+        self.assertEqual(kwargs["metadatas"], [{"vendor": "cisco", "os": "IOS-XE", "access_tier": "admin"}])
         self.assertIn("ssh.enabled=True", kwargs["documents"][0])
 
     def test_ingest_baseline_vector_defaults_os_to_unknown_sentinel(self):
@@ -402,10 +404,10 @@ class TestLearningService(unittest.TestCase):
         request = BaselineVectorRequest(config_sha256="b" * 64, vendor="cisco", baseline={})
 
         with patch("app.main.get_baseline_vector_collection", return_value=fake_collection):
-            ingest_baseline_vector(request)
+            ingest_baseline_vector(request, SVC)
 
         _, kwargs = fake_collection.upsert.call_args
-        self.assertEqual(kwargs["metadatas"], [{"vendor": "cisco", "os": "unknown"}])
+        self.assertEqual(kwargs["metadatas"], [{"vendor": "cisco", "os": "unknown", "access_tier": "admin"}])
 
     class _FakeVectorCollection:
         def __init__(self, target_embedding=None, peer_ids=None, peer_embeddings=None):
@@ -425,7 +427,7 @@ class TestLearningService(unittest.TestCase):
         request = AnomalyCheckRequest(config_sha256="a" * 64, vendor="cisco", os="IOS-XE")
 
         with patch("app.main.get_baseline_vector_collection", return_value=fake_collection):
-            result = check_baseline_anomaly(request)
+            result = check_baseline_anomaly(request, SVC)
 
         self.assertEqual(result, {"status": "not_ingested"})
 
@@ -438,7 +440,7 @@ class TestLearningService(unittest.TestCase):
         request = AnomalyCheckRequest(config_sha256="a" * 64, vendor="cisco", os="IOS-XE")
 
         with patch("app.main.get_baseline_vector_collection", return_value=fake_collection):
-            result = check_baseline_anomaly(request)
+            result = check_baseline_anomaly(request, SVC)
 
         self.assertEqual(result["status"], "insufficient_peers")
         self.assertEqual(result["peer_count"], 2)
@@ -456,7 +458,7 @@ class TestLearningService(unittest.TestCase):
         request = AnomalyCheckRequest(config_sha256="target-id", vendor="cisco", os="IOS-XE")
 
         with patch("app.main.get_baseline_vector_collection", return_value=fake_collection):
-            result = check_baseline_anomaly(request)
+            result = check_baseline_anomaly(request, SVC)
 
         self.assertEqual(result["status"], "scored")
         self.assertEqual(result["peer_count"], 6)
@@ -475,7 +477,7 @@ class TestLearningService(unittest.TestCase):
             )
             request = AnomalyCheckRequest(config_sha256="target-id", vendor="cisco", os="IOS-XE")
             with patch("app.main.get_baseline_vector_collection", return_value=fake_collection):
-                return check_baseline_anomaly(request)
+                return check_baseline_anomaly(request, SVC)
 
         typical = _score_for([0.0, 0.0])
         outlier = _score_for([1000.0, 1000.0])
@@ -503,7 +505,7 @@ class TestLearningService(unittest.TestCase):
         request = AnomalyCheckRequest(config_sha256="target-id", vendor="cisco", os="IOS-XE")
 
         with patch("app.main.get_baseline_vector_collection", return_value=_NumpyVectorCollection()):
-            result = check_baseline_anomaly(request)
+            result = check_baseline_anomaly(request, SVC)
 
         self.assertEqual(result["status"], "scored")
         self.assertEqual(result["peer_count"], 6)
@@ -511,3 +513,39 @@ class TestLearningService(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSimilarEndpoint(unittest.TestCase):
+    def test_returns_real_cosine_similarity_to_confirmed_mappings(self):
+        import numpy as np
+
+        class FakeCollection:
+            def get(self, include, limit, where=None):
+                return {"ids": ["m1", "m2"], "embeddings": np.array([[1.0, 0.0], [0.0, 1.0]]),
+                        "metadatas": [{"cli_pattern": "p1", "field": "ssh.management_acl", "value": "MGMT"}, {"cli_pattern": "p2", "field": "snmp.version", "value": "v3"}]}
+
+        with patch("app.main.db.get_pending_blocks", return_value=[{"block_id": "b1", "raw_text": "unknown-cmd"}]),              patch("app.main.get_embedding_function", return_value=lambda texts: [[0.9, 0.1]] * len(texts)),              patch("app.main.get_collection", return_value=FakeCollection()):
+            from app.main import similar_confirmed_mappings
+            result = asyncio.run(similar_confirmed_mappings("b1", claims=SVC))
+
+        self.assertEqual(result["best"]["field"], "ssh.management_acl")
+        self.assertAlmostEqual(result["best"]["similarity"], 0.9939, places=3)
+        self.assertEqual(len(result["points"]), 2)
+
+    def test_unknown_block_is_404_and_empty_collection_is_reported_honestly(self):
+        from fastapi import HTTPException
+        from app.main import similar_confirmed_mappings
+
+        with patch("app.main.db.get_pending_blocks", return_value=[]):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(similar_confirmed_mappings("nope", claims=SVC))
+        self.assertEqual(caught.exception.status_code, 404)
+
+        class Empty:
+            def get(self, include, limit, where=None):
+                return {"ids": [], "embeddings": [], "metadatas": []}
+
+        with patch("app.main.db.get_pending_blocks", return_value=[{"block_id": "b1", "raw_text": "x"}]),              patch("app.main.get_embedding_function", return_value=lambda texts: [[1.0, 0.0]]),              patch("app.main.get_collection", return_value=Empty()):
+            result = asyncio.run(similar_confirmed_mappings("b1", claims=SVC))
+        self.assertEqual(result["points"], [])
+        self.assertIn("No mappings have been confirmed", result["note"])

@@ -3,3 +3,8 @@
 configure
 set deviceconfig system service disable-telnet yes
 commit
+@@ROLLBACK@@
+# Rollback: restores the pre-fix state (re-introduces the finding)
+configure
+set deviceconfig system service disable-telnet no
+commit

@@ -48,6 +48,10 @@ class TopologyGraphProvider(Protocol):
         `max_hops` of it — the same neighborhood blast_radius() walks."""
         ...
 
+    async def fleet_topology(self, *, limit: int) -> dict[str, Any]:
+        """Every known device and routing adjacency (capped at `limit` nodes)."""
+        ...
+
 
 class EmptyTopologyGraphProvider:
     """Safe default: Compliance works when Neo4j is unavailable or unconfigured."""
@@ -59,6 +63,9 @@ class EmptyTopologyGraphProvider:
         return []
 
     async def topology(self, device_id: str, *, max_hops: int) -> dict[str, Any]:
+        return {"nodes": [], "edges": []}
+
+    async def fleet_topology(self, *, limit: int) -> dict[str, Any]:
         return {"nodes": [], "edges": []}
 
 
@@ -189,6 +196,32 @@ class Neo4jTopologyGraphProvider:
         cursor = await tx.run(query, device_id=device_id)
         records = [record async for record in cursor]
         return sorted(record["id"] for record in records if record["id"] != device_id)
+
+    async def fleet_topology(self, *, limit: int) -> dict[str, Any]:
+        async with self._driver.session() as session:
+            return await session.execute_read(self._read_fleet, int(limit))
+
+    @staticmethod
+    async def _read_fleet(tx, limit: int) -> dict[str, Any]:
+        rows = [r async for r in await tx.run(
+            "MATCH (n) WHERE n:Device OR n:UnresolvedPeer "
+            "RETURN elementId(n) AS eid, labels(n) AS labels, n.id AS id, n.ip AS ip, n.hostname AS hostname, n.vendor AS vendor "
+            "LIMIT $limit", limit=limit)]
+        nodes, public_ids = [], {}
+        for r in rows:
+            is_device = "Device" in r["labels"]
+            public_id = r["id"] if is_device else f"peer:{r['ip']}"
+            public_ids[r["eid"]] = public_id
+            nodes.append({"id": public_id, "kind": "device" if is_device else "unresolved",
+                          "hostname": r["hostname"] if is_device else None, "vendor": r["vendor"] if is_device else None,
+                          "ip": None if is_device else r["ip"]})
+        if not nodes:
+            return {"nodes": [], "edges": []}
+        edge_rows = [r async for r in await tx.run(
+            "MATCH (a)-[r:ROUTES_TO]->(b) WHERE elementId(a) IN $eids AND elementId(b) IN $eids "
+            "RETURN elementId(a) AS s, elementId(b) AS t, r.protocol AS protocol", eids=list(public_ids))]
+        edges = [{"source": public_ids[r["s"]], "target": public_ids[r["t"]], "protocol": r["protocol"]} for r in edge_rows]
+        return {"nodes": nodes, "edges": edges}
 
     async def topology(self, device_id: str, *, max_hops: int) -> dict[str, Any]:
         async with self._driver.session() as session:

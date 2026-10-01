@@ -10,7 +10,8 @@ from app.manual_provider import EmptyRemediationManualProvider, LearningRemediat
 from app.models import ApprovalRequest, Decision, Finding, GenerateRequest, PreflightResult, RemediationProposal
 from app.rag_remediation import RemediationSynthesisError, synthesize_remediation
 from app.slm_client import OllamaSLMClient
-from app.template_engine import RemediationTemplateError, available_templates, render_template
+from app import twin as twin_model
+from app.template_engine import RemediationTemplateError, available_templates, render_rollback, render_template
 
 app = FastAPI(title="netaudit-remediation", version="1.0.0")
 
@@ -77,6 +78,26 @@ async def _decide(audit_run_id: str, finding) -> Decision:
     return Decision(**result)
 
 
+async def _with_twin(proposal: RemediationProposal) -> RemediationProposal:
+    """Simulate the change on the device's stored baseline. A predicted loss of
+    a routing session or management path makes the proposal un-approvable
+    (RISK_FLAGS), the same gate a lockout pattern uses. A failed or missing
+    simulation never upgrades a proposal to SAFE."""
+    try:
+        baseline = await db.get_run_baseline(proposal.audit_run_id)
+        result = twin_model.simulate(proposal.script, baseline)
+    except Exception as exc:  # advisory layer: a broken simulation must not block proposals
+        result = {"modeled": False, "checks": [], "broken": 0, "note": f"Simulation unavailable: {type(exc).__name__}"}
+    proposal.twin = result
+    flags = twin_model.risk_flags(result)
+    if flags:
+        proposal.preflight = PreflightResult(
+            status="RISK_FLAGS", risk_flags=[*proposal.preflight.risk_flags, *flags],
+            engine=f"digital-twin+{proposal.preflight.engine}",
+        )
+    return proposal
+
+
 async def _build_proposal(audit_run_id: str, finding, device: dict, variables: dict) -> RemediationProposal:
     """Deterministic template path when a template exists; otherwise the
     agentic RAG fallback (app/rag_remediation.py) for a vendor with no
@@ -86,17 +107,19 @@ async def _build_proposal(audit_run_id: str, finding, device: dict, variables: d
     if finding.remediation is not None:
         try:
             script = render_template(finding.remediation, {**device, **variables})
+            rollback = render_rollback(finding.remediation, {**device, **variables})
         except RemediationTemplateError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return RemediationProposal(
+        return await _with_twin(RemediationProposal(
             audit_run_id=audit_run_id,
             control_id=finding.control_id,
             template_name=finding.remediation,
             script=script,
+            rollback_script=rollback,
             source="template",
             preflight=await preflight(script),
             decision=await _decide(audit_run_id, finding),
-        )
+        ))
 
     vendor = device.get("detected_vendor") or device.get("vendor")
     if not vendor:
@@ -130,7 +153,7 @@ async def _build_proposal(audit_run_id: str, finding, device: dict, variables: d
     if not result.rollback_cli:
         risk_flags.append("SLM did not produce a mandatory rollback script")
 
-    return RemediationProposal(
+    return await _with_twin(RemediationProposal(
         audit_run_id=audit_run_id,
         control_id=finding.control_id,
         template_name=f"agentic-rag:{vendor}:{finding.control_id}",
@@ -140,7 +163,7 @@ async def _build_proposal(audit_run_id: str, finding, device: dict, variables: d
         # Fixed at RISK_FLAGS, never SAFE — see AGENTIC_RAG_MANUAL_VERIFICATION_FLAG.
         preflight=PreflightResult(status="RISK_FLAGS", risk_flags=risk_flags, engine="agentic-rag"),
         decision=await _decide(audit_run_id, finding),
-    )
+    ))
 
 
 @app.post("/remediation/generate", response_model=RemediationProposal)

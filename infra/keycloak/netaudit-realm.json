@@ -1,0 +1,45 @@
+{
+  "realm": "netaudit",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 3600,
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "Full access, including approvals and user-facing admin actions" },
+      { "name": "operator", "description": "Upload, generate fixes, approve low-risk changes" },
+      { "name": "auditor", "description": "Read-only access to audits and reports" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "netaudit-web",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@netaudit.local", "email": "admin@netaudit.local", "emailVerified": true, "enabled": true,
+      "firstName": "NetAudit", "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "${KC_DEMO_PASSWORD}", "temporary": false }],
+      "realmRoles": ["admin"]
+    },
+    {
+      "username": "operator@netaudit.local", "email": "operator@netaudit.local", "emailVerified": true, "enabled": true,
+      "firstName": "NetAudit", "lastName": "Operator",
+      "credentials": [{ "type": "password", "value": "${KC_DEMO_PASSWORD}", "temporary": false }],
+      "realmRoles": ["operator"]
+    },
+    {
+      "username": "auditor@netaudit.local", "email": "auditor@netaudit.local", "emailVerified": true, "enabled": true,
+      "firstName": "NetAudit", "lastName": "Auditor",
+      "credentials": [{ "type": "password", "value": "${KC_DEMO_PASSWORD}", "temporary": false }],
+      "realmRoles": ["auditor"]
+    }
+  ]
+}

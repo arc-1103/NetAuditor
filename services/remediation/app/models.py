@@ -72,14 +72,16 @@ class RemediationProposal(BaseModel):
     preflight: PreflightResult
     decision: Decision | None = None
     approval_status: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"
-    # Set only when source == "agentic_rag" — the mandatory inverse script an
-    # operator runs if the remediation drops network connectivity. Template
-    # proposals have no rollback script; the template itself is trusted,
-    # version-controlled CLI, not a synthesized change to revert.
+    # The inverse script an operator runs if the change causes an outage. For
+    # templates it comes from the template's own rollback section; for
+    # agentic_rag it is synthesized and must be verified by a person. It
+    # restores the pre-fix state, so it re-introduces the finding.
     rollback_script: str | None = None
     # "template": rendered from a version-controlled .j2 file (the default,
     # safety-model-preserving path). "agentic_rag": SLM-synthesized via
     # app/rag_remediation.py, used only when no template exists for this
     # control's vendor.
     source: Literal["template", "agentic_rag"] = "template"
+    # Digital-twin reachability result (app/twin.py): {"modeled", "checks", "broken", "note"}.
+    twin: dict[str, Any] | None = None
 

@@ -50,7 +50,7 @@
     },
     "chunks": {
       "type": "array",
-      "description": "The raw config split into logical blocks by app/chunker.py, in order. Currently a naive fixed-size line splitter (default 500 lines/block), not block-boundary-aware.",
+      "description": "The raw config split into logical blocks by app/chunker.py, in order. Split along the config's indentation hierarchy: a parent line and its indented children are never separated, and an oversized block is split with its parent header repeated (max 500 lines/block).",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -64,6 +64,12 @@
           "text": {
             "type": "string",
             "description": "Raw block text, newline-joined."
+          },
+          "sections": {
+            "type": "array",
+            "maxItems": 10,
+            "items": { "type": "string" },
+            "description": "Optional. Top-level header lines (e.g. 'interface Gi0/1') of the blocks inside this chunk."
           }
         }
       }

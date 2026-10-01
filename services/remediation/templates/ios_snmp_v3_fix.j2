@@ -5,4 +5,10 @@ snmp-server group {{ snmp_group | default('NETAUDIT-V3') }} v3 priv
 snmp-server user {{ snmp_user | default('netaudit-monitor') }} {{ snmp_group | default('NETAUDIT-V3') }} v3 auth sha {{ snmp_auth_secret | default('<REPLACE_AUTH_SECRET>') }} priv aes 256 {{ snmp_priv_secret | default('<REPLACE_PRIV_SECRET>') }}
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+no snmp-server user {{ snmp_user | default('netaudit-monitor') }} {{ snmp_group | default('NETAUDIT-V3') }} v3
+no snmp-server group {{ snmp_group | default('NETAUDIT-V3') }} v3 priv
+end
+write memory

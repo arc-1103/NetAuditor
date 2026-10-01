@@ -12,3 +12,8 @@ config system snmp user
         set priv-pwd <REPLACE_PRIV_SECRET>
     next
 end
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+config system snmp user
+    delete "{{ snmp_user | default('netaudit-monitor') }}"
+end

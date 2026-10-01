@@ -3,3 +3,8 @@
 configure
 set deviceconfig system login-banner "{{ login_banner | default('Authorized access only. Activity may be monitored and reported.') }}"
 commit
+@@ROLLBACK@@
+# Rollback: restores the pre-fix state (re-introduces the finding)
+configure
+delete deviceconfig system login-banner
+commit

@@ -14,6 +14,8 @@ from typing import Protocol
 
 import httpx
 
+from app import service_token
+
 
 class RemediationManualProvider(Protocol):
     async def lookup(self, vendor: str, os_name: str | None, control_id: str) -> list[str]:
@@ -38,7 +40,7 @@ class LearningRemediationManualProvider:
 
     async def lookup(self, vendor: str, os_name: str | None, control_id: str) -> list[str]:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds, headers=service_token.auth_headers("remediation", "svc:remediation", "service_worker")) as client:
                 response = await client.post(
                     f"{self.base_url}/learning/remediation-manuals/search",
                     json={"vendor": vendor, "os": os_name, "control_id": control_id},

@@ -9,8 +9,9 @@ POST /evaluate used in demos and integration tests.
 
 import logging
 import os
+from datetime import datetime, timezone
 
-from app import anomaly_client, db, evidence_locator, graph_client, opa_client, risk_scorer, webhooks
+from app import anomaly_client, db, evidence_locator, waivers, graph_client, opa_client, risk_scorer, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,19 @@ async def shutdown_graph_provider() -> None:
     the whole process should be closed at exit, not per request."""
     if _graph is not None and hasattr(_graph, "close"):
         await _graph.close()
+
+
+async def _waived_controls(baseline: dict) -> set[str]:
+    """Controls with an active waiver for this device. Alerting is advisory, so a
+    lookup failure means 'notify as usual', never a failed evaluation."""
+    try:
+        identity = baseline.get("device") or {}
+        key = waivers.device_key(identity.get("detected_vendor"), identity.get("raw_hostname"), identity.get("config_sha256"))
+        listing = waivers.evaluate(await db.get_waiver_events(), datetime.now(timezone.utc))
+        return set(waivers.active_for_device(listing, key))
+    except Exception:
+        logger.warning("Could not look up waivers; alerting as usual", exc_info=True)
+        return set()
 
 
 async def evaluate_baseline(
@@ -145,7 +159,10 @@ async def evaluate_baseline(
         # ticketing webhook". Only the genuinely new ones (see
         # db.save_findings' docstring) — a re-evaluation of an
         # already-tracked, still-failing control must not re-notify.
+        waived = await _waived_controls(baseline)
         for finding in newly_detected:
+            if finding.get("control_id") in waived:
+                continue  # accepted risk: still in the evidence and the ledger, but no new alert
             await webhooks.dispatch("VIOLATION_DETECTED", {
                 "audit_run_id": audit_run_id,
                 "control_id": finding.get("control_id"),

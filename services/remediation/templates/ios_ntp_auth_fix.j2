@@ -6,4 +6,11 @@ ntp authentication-key {{ ntp_key_id | default(1) }} sha1 {{ ntp_key | default('
 ntp trusted-key {{ ntp_key_id | default(1) }}
 end
 write memory
-
+@@ROLLBACK@@
+! Rollback: restores the pre-fix state (re-introduces the finding)
+configure terminal
+no ntp trusted-key {{ ntp_key_id | default(1) }}
+no ntp authentication-key {{ ntp_key_id | default(1) }}
+no ntp authenticate
+end
+write memory
