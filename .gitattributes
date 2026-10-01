@@ -1,0 +1,23 @@
+# Line endings are a repository decision, not a per-developer one.
+#
+# Git for Windows ships with core.autocrlf=true at the system level, so without
+# this file every Windows contributor gets a CRLF working copy. That breaks two
+# things in this repo specifically:
+#
+#   1. Shell scripts executed inside Linux containers or Git Bash — a CRLF
+#      `#!/usr/bin/env bash` line fails with `$'\r': command not found`.
+#   2. scripts/check_env.sh — it skips blank lines with [[ -z "$key" ]], but a
+#      blank line in a CRLF file parses as "\r", not empty, so every blank line
+#      in a .env.example is reported as a missing key.
+#
+# `text=auto` lets Git detect text vs binary; `eol=lf` forces LF in the
+# repository *and* in the working copy, regardless of anyone's core.autocrlf.
+
+* text=auto eol=lf
+
+# Run inside Linux containers — must always be LF, never auto-detected.
+*.sh text eol=lf
+
+# Submission artifacts: byte-for-byte, never transformed.
+*.pptx binary
+*.pdf binary

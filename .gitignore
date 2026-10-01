@@ -20,7 +20,6 @@ scripts/README.md
 scripts/uv.lock
 gateway/uv.lock
 docker-compose.override.yml
-correctness.md
 
 # Local demo: holds a throwaway ledger signing key
 demo/secrets/

@@ -15,7 +15,7 @@ it never decides whether a control passes or fails.
 | Schema-constrained local parsing | Deterministic mock and Ollama modes |
 | Compliance verdicts | 11-control CIS-style generic Level 1 prototype bundle |
 | Demonstrated vendors | Deterministic fixtures for Cisco, Fortinet, Juniper, Palo Alto and Arista |
-| Deterministic remediation | Cisco and partial Fortinet Jinja2 templates |
+| Deterministic remediation | Jinja2 templates: Cisco 11/11 controls, Fortinet 9/11, Juniper 6/11, Palo Alto 4/11 |
 | Safety gate | Only `SAFE` preflight proposals can be approved |
 | Reporting | Browser preview, PDF, JSON and CEF |
 | Optional context | Learning queue, anomaly signal and topology blast radius |
@@ -35,6 +35,11 @@ Configuration → secret redaction → local AI extraction → Pydantic validati
 Low-confidence or invalid parsing becomes `NEEDS_REVIEW`; it is never displayed
 as compliant. AI-synthesized remediation is permanently marked `RISK_FLAGS` and
 cannot pass the normal approval gate.
+
+## Setup
+
+Full cross-platform setup instructions (macOS, Windows, Linux), including the
+no-Docker fallback and troubleshooting, are in [`SETUP.md`](SETUP.md).
 
 ## Fast presentation setup
 

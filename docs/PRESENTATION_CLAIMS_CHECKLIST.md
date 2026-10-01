@@ -6,7 +6,7 @@ Monday demo so the spoken claims match what the prototype can demonstrate.
 | Slide claim | Repository evidence | Demo wording |
 |---|---|---|
 | AI parses; rules decide | Compliance uses OPA/Rego; parsing is a separate contract | Safe to claim as architecture. Show a Rego finding with evidence. |
-| Jinja2 vendor-specific remediation | 11 Cisco IOS templates cover every current policy finding | Say "Cisco IOS remediation is implemented; other vendors are extensible templates." |
+| Jinja2 vendor-specific remediation | 30 templates across 4 vendors: Cisco 11/11 controls, Fortinet 9/11, Juniper 6/11, Palo Alto 4/11, Arista 0/11 | Say "Cisco IOS remediation is complete; Fortinet, Juniper and Palo Alto are partial; uncovered pairs fall back to a flagged, non-approvable draft." |
 | Batfish pre-flight, zero lock-out risk | Fail-safe adapter and static lockout checks exist; real topology snapshot integration is not configured | Do not claim proven zero risk. Say "approval is blocked unless preflight is SAFE; the demo uses mock Batfish plus deterministic safety checks." |
 | HTML/PDF reporting | Implemented HTML preview and real WeasyPrint PDF generation | Safe to demonstrate. |
 | SIEM-compatible JSON/CEF | Implemented authenticated JSON and CEF export routes | Safe to demonstrate. |
