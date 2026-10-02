@@ -1,6 +1,11 @@
+/* Tailwind without preflight (base reset), so the existing styles below keep their look. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
 :root {
   --radius:6px; --radius-sm:3px;
-  --mono:ui-monospace,SFMono-Regular,"JetBrains Mono",Menlo,monospace;
+  --mono:var(--font-plex-mono),ui-monospace,SFMono-Regular,"JetBrains Mono",Menlo,monospace;
   --console:#0a0f14;
   /* --console never changes with the theme (it's a terminal-style
      surface, like a code block) — these text tokens must stay fixed too,
@@ -12,7 +17,7 @@
   color-scheme:dark;
   --bg:#0a0f14; --panel:#12181f; --panel2:#161d25; --well:#0d131a;
   --line:#232b34; --line-soft:#1a2129; --line-strong:#37424d;
-  --ink:#eef2f5; --muted:#8b97a3; --dim:#5f6b76;
+  --ink:#eef2f5; --muted:#8b97a3; --dim:#7a8692;
   --teal:#3ecfb0; --teal-ink:#06120f; --teal-dim:#16332c; --teal-hover:#5adcc0;
   --critical:#ef6a63; --critical-bg:#331b1c;
   --high:#e8975a; --high-bg:#33251a;
@@ -43,7 +48,7 @@
   --shadow-md:0 24px 48px -28px rgba(15,23,42,.22);
 }
 * { box-sizing:border-box; }
-html,body { margin:0; min-height:100%; background:var(--bg); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; transition:background-color .15s,color .15s; }
+html,body { margin:0; min-height:100%; background:var(--bg); color:var(--ink); font-family:var(--font-plex-sans),Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; transition:background-color .15s,color .15s; }
 button,input { font:inherit; color:inherit; }
 button { cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.45; }
@@ -135,7 +140,10 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .warning { color:var(--warning-fg); background:var(--warning-bg); border-color:var(--warning-border); }
 
 /* ---- upload ---- */
-.upload-stage { display:grid; grid-template-columns:1fr 460px; gap:6vw; align-items:center; min-height:68vh; max-width:1180px; margin:auto; }
+.upload-stage { display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,460px); column-gap:clamp(24px,5vw,72px); row-gap:28px; align-items:start; max-width:1180px; margin:0 auto; padding-top:24px; }
+.upload-stage>.stage-copy { grid-column:1; grid-row:1; }
+.upload-stage>.collect-box { grid-column:1; grid-row:2; margin-top:0; }
+.upload-stage>.dropzone { grid-column:2; grid-row:1 / span 2; align-self:stretch; min-height:320px; }
 .stage-copy h2 { font-size:36px; font-weight:700; line-height:1.15; letter-spacing:-1px; margin:12px 0 16px; max-width:580px; }
 .stage-copy>p:not(.eyebrow) { color:var(--muted); line-height:1.75; max-width:560px; }
 .pipeline { display:flex; align-items:center; gap:12px; margin-top:34px; color:var(--dim); font-size:9px; letter-spacing:.8px; text-transform:uppercase; }
@@ -171,7 +179,7 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .dot.critical,.severity.critical { background:var(--critical-bg); color:var(--critical); }
 .dot.high,.severity.high { background:var(--high-bg); color:var(--high); }
 .dot.medium,.severity.medium { background:var(--medium-bg); color:var(--medium); }
-.dot.low,.severity.low { background:var(--low-bg); color:var(--low); }
+.dot.low,.severity.low { background:transparent; color:var(--muted); box-shadow:inset 0 0 0 1px var(--line-strong); }
 
 /* ---- findings / drawer ---- */
 .findings { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-sm); }
@@ -337,7 +345,8 @@ button:disabled { cursor:not-allowed; opacity:.45; }
   .login-story { min-height:40vh; }
   .story-copy { margin:60px 0; }
   .login-panel { min-height:56vh; }
-  .upload-stage { grid-template-columns:1fr; padding:56px 0; }
+  .upload-stage { grid-template-columns:1fr; padding:24px 0; }
+  .upload-stage>.stage-copy,.upload-stage>.collect-box,.upload-stage>.dropzone { grid-column:1; grid-row:auto; }
   .metrics { grid-template-columns:repeat(4,1fr); }
   .score-card { grid-column:1/-1; }
 }
@@ -400,7 +409,9 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 
 .exec-card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px 19px; margin-bottom:16px; box-shadow:var(--shadow-sm); }
 .exec-card h3 { margin:0 0 12px; font-size:11px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); font-weight:700; }
-.exec-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
+.exec-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:stretch; margin-bottom:16px; }
+.exec-grid>.exec-card { margin-bottom:0; display:flex; flex-direction:column; }
+.exec-grid>.exec-card>.score-card { flex:1; align-items:center; justify-content:center; min-height:0; }
 @media (max-width:1050px) { .exec-grid { grid-template-columns:1fr; } }
 
 .teach-form { display:grid; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }

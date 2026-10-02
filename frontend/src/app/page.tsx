@@ -6,6 +6,7 @@ import {
   getAuditTrust, getExecutiveReport, getLearningQueue, getDrift, getHistory, getLedgerProof, grantWaiver, listWaivers, revokeWaiver, getLedgerStatus, sealLedger, verifyLedger, getProvenance, getTimeStatus, getTopology, listAuditRunIds, login, openProtectedReport,
   rollbackRemediation, Role, searchKnowledge, simulateFix, submitLearningMap, uploadConfig, USE_MOCK,
 } from "../lib/api";
+import RemediationActionCard from "../components/RemediationActionCard";
 import { RiskMapView, SimilarityPlot, TrendChart, VerificationPipeline } from "./widgets";
 import type { CollectTarget, LedgerStatus, LedgerVerification, TimeStatus } from "../lib/api";
 import type { KnowledgeSearchResult, Waiver, AuditRun, ControlResult, ScoreCycle, TwinResult, DeviceHistory, DriftResult, ExecutiveReport, Finding, FixSimulation, LearningQueueItem, ProvenanceChain, Remediation, Severity, TopologyGraph, TrustView } from "../lib/types";
@@ -383,8 +384,9 @@ function ProvenancePanel({ runId, controlId, token }: { runId: string; controlId
   </section>;
 }
 
-function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, onClose, onWaiverChange, busy, runId, token, role }: {
+function FindingPanel({ finding, remediation, device, onDecision, onApply, onRollback, onClose, onWaiverChange, busy, runId, token, role }: {
   finding: Finding; remediation?: Remediation;
+  device: { hostname: string; vendor: string; os?: string | null };
   onDecision: (approved: boolean) => void;
   onApply: () => void;
   onRollback: (reason: string) => void;
@@ -392,8 +394,6 @@ function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, o
   onWaiverChange: () => void;
   busy: boolean; runId: string; token: string; role: Role;
 }) {
-  const status = remediation?.preflight_status || remediation?.preflight?.status;
-  const flags = remediation?.risk_flags || remediation?.preflight?.risk_flags || [];
   const [minimized, setMinimized] = useState(false);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -402,20 +402,11 @@ function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, o
   }, [onClose]);
   const [qwenAnswer, setQwenAnswer] = useState("");
   const [qwenStatus, setQwenStatus] = useState("");
-  const [rollbackReason, setRollbackReason] = useState("");
-  const [showRollbackForm, setShowRollbackForm] = useState(false);
   async function explain() {
     setQwenStatus("asking"); setQwenAnswer("");
     try { setQwenAnswer(await askLocalQwen(finding.title, finding.evidence)); setQwenStatus("ready"); }
     catch { setQwenStatus("error"); }
   }
-  const isDualApproval = remediation?.decision?.action === "DUAL_APPROVAL";
-  // Mirrors app/approval_matrix.py's check_permission so a disabled button
-  // never surprises the operator with a 403 the UI could have predicted.
-  const roleBlocksApproval = role === "auditor"
-    || (role === "operator" && remediation?.decision && (remediation.decision.risk === "HIGH" || remediation.decision.blast_radius_count > 0));
-  const isApplied = remediation?.applied_at != null;
-  const isRolledBack = remediation?.rollback_status === "ROLLED_BACK";
   return <>
   {!minimized && <div className="drawer-backdrop" onClick={onClose} />}
   <aside className={`drawer ${minimized ? "minimized" : ""}`}>
@@ -432,34 +423,9 @@ function FindingPanel({ finding, remediation, onDecision, onApply, onRollback, o
     <section><h3>Why this matters</h3><p className="muted">In simple terms, this setting may let an attacker reach or control the device more easily. A person must review every suggested fix before approval.</p>{finding.blast_radius?.length ? <p className="blast">Other devices that may be affected · {finding.blast_radius.join(" · ")}</p> : null}</section>
     <section className="qwen-box"><div className="remediation-title"><h3>Live local AI</h3><span className={`model-state ${qwenStatus}`}>{qwenStatus === "ready" ? "QWEN LIVE" : "OPTIONAL"}</span></div><p className="muted">Ask locally running Qwen to explain this result in everyday language. It explains; fixed rules still decide.</p><button className="secondary" onClick={explain} disabled={qwenStatus === "asking"}>{qwenStatus === "asking" ? "Qwen is thinking…" : "Ask Qwen to explain"}</button>{qwenAnswer && <p className="ai-answer">{qwenAnswer}</p>}{qwenStatus === "error" && <p className="source">Local model unavailable. Run: ollama serve</p>}</section>
     {!remediation ? <div className="empty-card"><p>No proposal generated yet.</p><span>Generate deterministic fixes for this audit from the toolbar.</span></div> : <section>
-      <div className="remediation-title"><h3>Proposed remediation</h3><span className={`preflight ${(status || "unavailable").toLowerCase()}`}>{status || "UNKNOWN"}</span></div>
-      {remediation.source === "agentic_rag" && <div className="alert error">AI-synthesized draft · cannot be directly approved</div>}
-      {flags.length > 0 && <div className="alert warning">{flags.join(" · ")}</div>}
+      <RemediationActionCard finding={finding} remediation={remediation} device={device} role={role} busy={busy}
+        onApprove={() => onDecision(true)} onReject={() => onDecision(false)} onMarkApplied={onApply} onRollback={onRollback} />
       <TwinPanel twin={remediation.twin} />
-      {isDualApproval && !isApplied && <p className="source">
-        <span className="badge dual">2-person rule</span>{" "}
-        {remediation.dual_approval ? `${remediation.dual_approval.received} of ${remediation.dual_approval.required} approvals recorded` : "requires two independent approvals"}
-      </p>}
-      {roleBlocksApproval && remediation.approval_status !== "APPROVED" && <p className="source">Your role ({role}) cannot approve this change — see docs/Additional-Features.md §7's approval matrix.</p>}
-      <pre className="command">{remediation.script}</pre>
-      {remediation.rollback_script && <details className="rollback-script"><summary>Rollback script · run only if this change causes an outage</summary><pre className="command">{remediation.rollback_script}</pre><p className="source">Restores the pre-fix state, so it re-introduces the finding. Lines marked REVIEW need the original values from your pre-change backup.</p></details>}
-      {!isApplied ? <div className="decision-row">
-        <button className="secondary" disabled={busy} onClick={() => onDecision(false)}>Reject</button>
-        <button className="primary" disabled={busy || status !== "SAFE" || roleBlocksApproval} onClick={() => onDecision(true)}>{remediation.approval_status === "APPROVED" ? "Approved ✓" : "Approve safe fix"}</button>
-      </div> : null}
-      {remediation.approval_status === "APPROVED" && !isApplied && <div className="decision-row">
-        <span className="source">Approved — an operator can now run this script and mark it applied.</span>
-        <button className="primary" disabled={busy} onClick={onApply}>Mark applied</button>
-      </div>}
-      {isApplied && !isRolledBack && <div className="decision-row">
-        <span className="badge applied">APPLIED · {new Date(remediation.applied_at as string).toLocaleString()}</span>
-        <button className="secondary" disabled={busy} onClick={() => setShowRollbackForm((v) => !v)}>Roll back</button>
-      </div>}
-      {isApplied && !isRolledBack && showRollbackForm && <div className="teach-form">
-        <label>Reason for rollback<input value={rollbackReason} onChange={(e) => setRollbackReason(e.target.value)} placeholder="e.g. broke management access to branch switch" /></label>
-        <div className="decision-row"><button className="primary" disabled={busy || !rollbackReason.trim()} onClick={() => { onRollback(rollbackReason); setShowRollbackForm(false); setRollbackReason(""); }}>Confirm rollback</button></div>
-      </div>}
-      {isRolledBack && <p className="source"><span className="badge rolled-back">ROLLED BACK</span></p>}
     </section>}
     <WaiverPanel finding={finding} runId={runId} token={token} role={role} onChanged={onWaiverChange} />
     <HistoryPanel runId={runId} controlId={finding.control_id} token={token} />
@@ -1028,7 +994,7 @@ export default function Home() {
           <ConfidenceLedger device={audit.device} status={audit.status} />
           <TrustPanel runId={audit.id} token={token} />
           <section className="results-layout"><div className="findings"><div className="section-title"><div><p className="eyebrow">PASS / FAIL · RISK SEVERITY</p><h2>Findings</h2></div><span>{visibleFindings.length === audit.findings.length ? `${audit.findings.length} failed controls` : `${visibleFindings.length} of ${audit.findings.length} shown`}</span></div><div className="finding-filters"><input type="search" value={findingQuery} onChange={(e) => setFindingQuery(e.target.value)} placeholder="Filter by control, title or evidence" aria-label="Filter findings" /><select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value as "ALL" | Severity)} aria-label="Filter by severity"><option value="ALL">All severities</option>{severityOrder.map((level) => <option key={level} value={level}>{level}</option>)}</select></div><div className="finding-list">{visibleFindings.length === 0 && <p className="source" style={{ padding: "14px 17px" }}>No findings match this filter.</p>}{visibleFindings.map((finding) => { const proposal = remediations.find((item) => item.control_id === finding.control_id); return <button key={finding.control_id} className={selected?.control_id === finding.control_id ? "selected" : ""} onClick={() => setSelected(finding)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><div><strong>{finding.title}</strong><p>{finding.control_id} · {finding.evidence}</p></div><span className="finding-state">{finding.waiver ? "WAIVED" : proposal?.applied_at ? "APPLIED" : proposal?.approval_status === "APPROVED" ? "✓ APPROVED" : proposal ? (proposal.preflight_status || proposal.preflight?.status) : "REVIEW"}</span><b>›</b></button>; })}</div><ControlResults results={audit.control_results} /></div></section>
-          {selected && <FindingPanel finding={selected} remediation={selectedRemediation} onDecision={decide} onApply={applyFix} onRollback={rollbackFix} onClose={() => setSelected(null)} onWaiverChange={refreshAudit} busy={busy === "decision"} runId={audit.id} token={token} role={role} />}
+          {selected && <FindingPanel finding={selected} remediation={selectedRemediation} device={{ hostname: audit.device?.hostname || audit.original_filename, vendor: audit.device?.detected_vendor || "Unrecognized", os: audit.device?.detected_os }} onDecision={decide} onApply={applyFix} onRollback={rollbackFix} onClose={() => setSelected(null)} onWaiverChange={refreshAudit} busy={busy === "decision"} runId={audit.id} token={token} role={role} />}
         </>}
       </div>}
   </main>;
