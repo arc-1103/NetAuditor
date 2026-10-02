@@ -87,6 +87,7 @@ services:
       # Keep the model resident: a cold load can take 90s+ from a bind mount and
       # would otherwise recur after every 5 idle minutes, timing out the parser.
       OLLAMA_KEEP_ALIVE: "-1"
+      NVIDIA_VISIBLE_DEVICES: all
     volumes:
       # Point OLLAMA_MODELS_DIR at an existing host Ollama model folder to reuse it.
       - ${OLLAMA_MODELS_DIR:-./infra/ollama/models}:/root/.ollama/models
@@ -95,6 +96,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 18
+    # Run the model on the NVIDIA GPU (needs Docker Desktop's WSL2 GPU support).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   # One-shot, idempotent model bootstrap. Pre-pull this before an air-gapped

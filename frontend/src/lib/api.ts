@@ -33,15 +33,43 @@ function wait(ms = 550) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Every failed call surfaces as a plain sentence, never raw JSON, HTML or a
+// browser error like "Failed to fetch". FastAPI errors arrive as
+// {"detail": "..."} (or a list of validation errors); proxies can return HTML.
+const STATUS_TEXT: Record<number, string> = {
+  401: "Your session has expired. Sign in again.",
+  403: "Your role isn't allowed to do this.",
+  404: "That item wasn't found. It may have been removed.",
+  413: "That file is too large to upload.",
+  429: "Too many requests. Wait a moment and try again.",
+  502: "The service is starting or unavailable. Try again in a minute.",
+  503: "The service is starting or unavailable. Try again in a minute.",
+  504: "The service took too long to respond. Try again.",
+};
+
+function errorMessage(body: string, status: number): string {
+  try {
+    const detail = JSON.parse(body)?.detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (Array.isArray(detail) && detail.length) return detail.map((d) => d?.msg ?? String(d)).join("; ");
+  } catch { /* not JSON, fall through */ }
+  const text = body.trim();
+  if (text && !text.startsWith("<") && !text.startsWith("{") && text.length < 300) return text;
+  return STATUS_TEXT[status] ?? (status >= 500 ? "The server hit an error. Try again, and check the service logs if it keeps happening." : `The request failed (${status}).`);
+}
+
+// fetch() rejects with a bare TypeError when the server can't be reached.
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  try { return await fetch(url, init); }
+  catch { throw new Error("Can't reach the NetAudit server. Check that the stack is running, then try again."); }
+}
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await apiFetch(`${API_BASE}${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...(init?.headers || {}) },
   });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(body || `Request failed (${response.status})`);
-  }
+  if (!response.ok) throw new Error(errorMessage(await response.text(), response.status));
   return response.json() as Promise<T>;
 }
 
@@ -55,10 +83,11 @@ export async function login(email: string, password: string, mockRole: Role = "a
     // approveRemediation below) demonstrable without a live gateway.
     return { access_token: "demo-token", user: { email, role: mockRole } };
   }
-  const response = await fetch(`${API_BASE}/api/login`, {
+  const response = await apiFetch(`${API_BASE}/api/login`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }),
   });
-  if (!response.ok) throw new Error("Invalid credentials or gateway unavailable");
+  if (response.status === 401 || response.status === 403) throw new Error("Wrong email or password.");
+  if (!response.ok) throw new Error(errorMessage(await response.text(), response.status));
   return response.json();
 }
 
@@ -324,8 +353,8 @@ export function reportUrl(runId: string, kind: "download" | "preview" | "json" |
 }
 
 export async function openProtectedReport(runId: string, token: string, kind: "download" | "preview" | "json" | "cef") {
-  const response = await fetch(reportUrl(runId, kind), { headers: { Authorization: `Bearer ${token}` } });
-  if (!response.ok) throw new Error("The generated report could not be opened");
+  const response = await apiFetch(reportUrl(runId, kind), { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error(errorMessage(await response.text(), response.status));
   const url = URL.createObjectURL(await response.blob());
   window.open(url, "_blank", "noopener,noreferrer");
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);

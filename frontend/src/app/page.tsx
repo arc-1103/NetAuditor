@@ -228,13 +228,13 @@ function WaiverRegister({ token, role }: { token: string; role: Role }) {
   const [error, setError] = useState("");
   const load = () => listWaivers(token).then(setWaivers).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not load waivers"));
   useEffect(() => { load(); }, [token]);
-  if (error) return null;
+  if (error && !waivers) return <div className="empty-card waiver-register"><p>Waivers</p><div className="alert error">{error}</div></div>;
   if (!waivers || waivers.length === 0) return <div className="empty-card waiver-register"><p>Waivers</p><span>No risk has been accepted. A waiver is a dated, reasoned exception recorded in the ledger.</span></div>;
   return <div className="empty-card waiver-register"><p>Waivers · accepted risk</p>
     <table className="mini-table"><thead><tr><th>Control</th><th>Device</th><th>Status</th><th>Ends</th><th>By</th><th /></tr></thead><tbody>
       {waivers.map((w) => <tr key={w.waiver_id} title={w.reason}><td>{w.control_id}</td><td>{w.device_key}</td><td><span className={`result-badge ${w.status === "ACTIVE" ? "waived" : "fail"}`}>{w.status}</span></td><td>{new Date(w.expires_at).toLocaleDateString()}</td><td>{w.granted_by}</td>
-        <td>{role === "admin" && w.status === "ACTIVE" && <button className="secondary" onClick={() => revokeWaiver(w.waiver_id, "Revoked from the register", token).then(load)}>Revoke</button>}</td></tr>)}
-    </tbody></table></div>;
+        <td>{role === "admin" && w.status === "ACTIVE" && <button className="secondary" onClick={() => { setError(""); revokeWaiver(w.waiver_id, "Revoked from the register", token).then(load).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not revoke the waiver")); }}>Revoke</button>}</td></tr>)}
+    </tbody></table>{error && <div className="alert error">{error}</div>}</div>;
 }
 
 function CadenceNote({ label, cycle }: { label: string; cycle?: ScoreCycle }) {
@@ -630,16 +630,17 @@ function LedgerIntegrity({ token, role }: { token: string; role: Role }) {
   const [status, setStatus] = useState<LedgerStatus | null>(null);
   const [verification, setVerification] = useState<LedgerVerification | null>(null);
   const [message, setMessage] = useState("");
+  const [ledgerError, setLedgerError] = useState("");
   const [busy, setBusy] = useState("");
-  const refresh = () => getLedgerStatus(token).then(setStatus).catch((reason) => setMessage(reason instanceof Error ? reason.message : "Ledger unavailable"));
+  const refresh = () => getLedgerStatus(token).then(setStatus).catch((reason) => setLedgerError(reason instanceof Error ? reason.message : "Ledger unavailable"));
   useEffect(() => { refresh(); }, [token]);
   async function run(kind: "seal" | "verify") {
-    setBusy(kind); setMessage("");
+    setBusy(kind); setMessage(""); setLedgerError("");
     try {
       if (kind === "seal") { const result = await sealLedger(token); setMessage(result.sealed ? `Sealed ${result.sealed} event(s) as seal ${result.seq}.` : "Nothing new to seal."); }
       else setVerification(await verifyLedger(token));
       await refresh();
-    } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Request failed"); }
+    } catch (reason) { setLedgerError(reason instanceof Error ? reason.message : "Request failed"); }
     finally { setBusy(""); }
   }
   return <div className="empty-card ledger-card">
@@ -650,9 +651,9 @@ function LedgerIntegrity({ token, role }: { token: string; role: Role }) {
       {status.head && <code className="ledger-head">head #{status.head.seq} {status.head.hash.slice(0, 24)}…</code>}
     </> : null}
     {verification && <div className={`alert ${verification.ok ? "success" : "error"}`}>{verification.ok ? `Verified: ${verification.events_sealed} sealed events across ${verification.seals} seal(s) are intact.` : `TAMPERING DETECTED: ${verification.problems.map((p) => `seal ${p.seal} — ${p.detail}`).join("; ")}`}</div>}
-    {message && <span className="source">{message}</span>}
+    {message && <span className="source">{message}</span>}{ledgerError && <div className="alert error">{ledgerError}</div>}
     <div className="decision-row">
-      <button className="secondary" disabled={!!busy} onClick={() => run("verify")}>{busy === "verify" ? "Verifying…" : "Verify ledger"}</button>
+      <button className="secondary" disabled={!!busy || (status !== null && !status.signing_configured)} onClick={() => run("verify")}>{busy === "verify" ? "Verifying…" : "Verify ledger"}</button>
       {role === "admin" && <button className="primary" disabled={!!busy || !status?.signing_configured} onClick={() => run("seal")}>{busy === "seal" ? "Sealing…" : "Seal now"}</button>}
     </div>
   </div>;
