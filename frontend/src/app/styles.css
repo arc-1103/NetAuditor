@@ -186,13 +186,16 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .section-title { display:flex; justify-content:space-between; align-items:end; padding:17px 18px 13px; border-bottom:1px solid var(--line); }
 .section-title h2 { margin:0; font-size:15px; font-weight:700; }
 .section-title>span { color:var(--dim); font-size:11px; }
-.finding-list>button { width:100%; display:grid; grid-template-columns:68px 1fr 78px 12px; gap:12px; align-items:center; text-align:left; color:inherit; background:transparent; border:0; border-bottom:1px solid var(--line-soft); padding:14px 17px; }
+.finding-row>.finding-open { width:100%; display:grid; grid-template-columns:68px 1fr 78px 12px; gap:12px; align-items:center; text-align:left; color:inherit; background:transparent; border:0; padding:14px 17px; }
+.finding-row { display:flex; align-items:center; border-bottom:1px solid var(--line-soft); }
+.finding-row>.finding-open { flex:1; min-width:0; }
+.finding-row>.row-close { flex:none; margin-right:14px; font-size:11px; padding:6px 10px; }
 .finding-filters { display:grid; grid-template-columns:1fr 150px; gap:8px; padding:10px 18px; border-bottom:1px solid var(--line-soft); }
 .finding-filters input,.finding-filters select { color:var(--ink); background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:7px 10px; font-size:12px; min-width:0; outline:none; }
 .finding-filters input:focus,.finding-filters select:focus { border-color:var(--teal); }
-.finding-list>button:last-child { border-bottom:0; }
-.finding-list>button:hover,.finding-list>button.selected { background:var(--panel2); }
-.finding-list>button.selected { background:color-mix(in srgb,var(--teal) 10%,var(--panel)); }
+.finding-list>.finding-row:last-child { border-bottom:0; }
+.finding-row>.finding-open:hover,.finding-row>.finding-open.selected { background:var(--panel2); }
+.finding-row>.finding-open.selected { background:color-mix(in srgb,var(--teal) 10%,var(--panel)); }
 .severity { width:max-content; padding:4px 6px; border-radius:var(--radius-sm); font-size:11px; font-weight:800; letter-spacing:.6px; }
 .finding-list strong { font-size:12px; font-weight:600; }
 .finding-list p { color:var(--dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:5px 0 0; }
@@ -362,7 +365,7 @@ button:disabled { cursor:not-allowed; opacity:.45; }
   .score-card { grid-column:1/-1; }
   .device-meta { flex-wrap:wrap; }
   .audit-head { align-items:flex-start; gap:14px; }
-  .finding-list>button { grid-template-columns:64px 1fr 12px; }
+  .finding-row>.finding-open { grid-template-columns:64px 1fr 12px; }
   .finding-state { display:none; }
   .stage-copy h2 { font-size:29px; }
   .login-story { padding:26px; }
@@ -456,7 +459,7 @@ body { line-height:1.5; font-variant-numeric:tabular-nums; }
 .primary,.secondary { min-height:38px; transition-timing-function:var(--ease); }
 .primary:hover:not(:disabled) { box-shadow:0 6px 16px -8px var(--teal); }
 .secondary:hover:not(:disabled) { background:var(--line-soft); }
-.nav-items button,.finding-list>button,.fleet-toggle { transition:background-color .15s var(--ease),color .15s var(--ease); }
+.nav-items button,.finding-row>.finding-open,.fleet-toggle { transition:background-color .15s var(--ease),color .15s var(--ease); }
 .nav-items button { padding:11px 12px; }
 .sidebar-toggle,.theme-toggle,.drawer-controls button { width:28px; height:28px; }
 input:not([type="checkbox"]):hover,select:hover,textarea:hover { border-color:var(--line-strong); }
@@ -475,7 +478,7 @@ input:not([type="checkbox"]):hover,select:hover,textarea:hover { border-color:va
 .metrics { gap:12px; margin-bottom:24px; }
 .metric strong { font-size:30px; letter-spacing:-.5px; }
 .section-title { padding:18px 20px 14px; }
-.finding-list>button { padding:15px 20px; min-height:56px; }
+.finding-row>.finding-open { padding:15px 20px; min-height:56px; }
 .finding-list p { font-size:12px; }
 .finding-list strong { font-size:13px; }
 
@@ -521,7 +524,7 @@ input:not([type="checkbox"]):hover,select:hover,textarea:hover { border-color:va
 /* mobile */
 @media (max-width:720px) {
   .primary,.secondary,.role-picker button { min-height:44px; }
-  .nav-items button,.finding-list>button { min-height:48px; }
+  .nav-items button,.finding-row>.finding-open { min-height:48px; }
   .sidebar-toggle,.theme-toggle,.drawer-controls button { width:40px; height:40px; }
   .drawer { width:100vw; }
   .workspace header { gap:12px; flex-wrap:wrap; }

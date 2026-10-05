@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyRemediation, approveRemediation, askLocalQwen, collectConfig, generateRemediations, generateReport, getAudit,
   getAuditTrust, getExecutiveReport, getLearningQueue, getDrift, getHistory, getLedgerProof, grantWaiver, listWaivers, revokeWaiver, getLedgerStatus, sealLedger, verifyLedger, getProvenance, getTimeStatus, getTopology, listAuditRunIds, login, openProtectedReport,
@@ -184,7 +184,7 @@ function HistoryPanel({ runId, controlId, token }: { runId: string; controlId: s
   </section>;
 }
 
-function WaiverPanel({ finding, runId, token, role, onChanged }: { finding: Finding; runId: string; token: string; role: Role; onChanged: () => void }) {
+function WaiverPanel({ finding, runId, token, role, onChanged, startOpen = false }: { finding: Finding; runId: string; token: string; role: Role; onChanged: () => void; startOpen?: boolean }) {
   const inThirtyDays = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
   const maxDay = new Date(Date.now() + 90 * 864e5).toISOString().slice(0, 10);
   const [open, setOpen] = useState(false);
@@ -193,7 +193,11 @@ function WaiverPanel({ finding, runId, token, role, onChanged }: { finding: Find
   const [ticket, setTicket] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { setOpen(false); setReason(""); setError(""); }, [finding.control_id, runId]);
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    setOpen(startOpen); setReason(""); setError("");
+    if (startOpen) panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [finding.control_id, runId, startOpen]);
   async function act(run: () => Promise<unknown>) {
     setBusy(true); setError("");
     try { await run(); setOpen(false); setReason(""); onChanged(); }
@@ -201,7 +205,7 @@ function WaiverPanel({ finding, runId, token, role, onChanged }: { finding: Find
     finally { setBusy(false); }
   }
   const waiver = finding.waiver;
-  return <section className="waiver-panel"><h3>Accepted risk (waiver)</h3>
+  return <section className="waiver-panel" ref={panelRef}><h3>Close violation (accepted risk)</h3>
     {waiver ? <>
       <p className="waiver-active"><span className="result-badge waived">WAIVED</span> until <b>{new Date(waiver.expires_at).toLocaleDateString()}</b> · granted by {waiver.granted_by}{waiver.ticket ? ` · ${waiver.ticket}` : ""}</p>
       <p className="muted">{waiver.reason}</p>
@@ -209,14 +213,14 @@ function WaiverPanel({ finding, runId, token, role, onChanged }: { finding: Find
       {role === "admin" && <div className="decision-row"><button className="secondary" disabled={busy} onClick={() => act(() => revokeWaiver(waiver.waiver_id, "Revoked from the audit workspace", token))}>Revoke waiver</button></div>}
     </> : <>
       {finding.waiver_note && <p className="source">{finding.waiver_note}</p>}
-      {role !== "admin" ? <p className="source">Only an administrator can accept the risk of a failing control.</p> : !open
-        ? <div className="decision-row"><span className="source">For a deliberate exception, such as an isolated legacy system or a honeypot.</span><button className="secondary" onClick={() => setOpen(true)}>Waive this finding…</button></div>
+      {role !== "admin" ? <p className="source">Only an administrator can close a violation.</p> : !open
+        ? <div className="decision-row"><span className="source">For a deliberate exception, such as an isolated legacy system or a honeypot. The violation stays on record and reopens when the closure expires.</span><button className="secondary" onClick={() => setOpen(true)}>Close violation (accept risk)…</button></div>
         : <div className="teach-form">
           <label>Justification (required, kept in the ledger)<textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="e.g. Isolated legacy system for mission 4417; compensating control: air-gapped VLAN" /></label>
-          <label>Waiver ends on (automatic, max 90 days)<input type="date" value={until} min={new Date().toISOString().slice(0, 10)} max={maxDay} onChange={(e) => setUntil(e.target.value)} /></label>
+          <label>Reopens on (automatic, max 90 days)<input type="date" value={until} min={new Date().toISOString().slice(0, 10)} max={maxDay} onChange={(e) => setUntil(e.target.value)} /></label>
           <label>Change / ticket reference (optional)<input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="CHG-1234" /></label>
           <div className="decision-row"><button className="secondary" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
-            <button className="primary" disabled={busy || reason.trim().length < 15} onClick={() => act(() => grantWaiver({ audit_run_id: runId, control_id: finding.control_id, reason, expires_at: `${until}T23:59:59Z`, ticket: ticket || undefined }, token))}>{busy ? "Recording…" : "Grant waiver"}</button></div>
+            <button className="primary" disabled={busy || reason.trim().length < 15} onClick={() => act(() => grantWaiver({ audit_run_id: runId, control_id: finding.control_id, reason, expires_at: `${until}T23:59:59Z`, ticket: ticket || undefined }, token))}>{busy ? "Recording…" : "Close violation"}</button></div>
         </div>}
     </>}
     {error && <p className="source">{error}</p>}
@@ -384,7 +388,7 @@ function ProvenancePanel({ runId, controlId, token }: { runId: string; controlId
   </section>;
 }
 
-function FindingPanel({ finding, remediation, device, onDecision, onApply, onRollback, onClose, onWaiverChange, busy, runId, token, role }: {
+function FindingPanel({ finding, remediation, device, onDecision, onApply, onRollback, onClose, onWaiverChange, busy, runId, token, role, startClosing = false }: {
   finding: Finding; remediation?: Remediation;
   device: { hostname: string; vendor: string; os?: string | null };
   onDecision: (approved: boolean) => void;
@@ -392,7 +396,7 @@ function FindingPanel({ finding, remediation, device, onDecision, onApply, onRol
   onRollback: (reason: string) => void;
   onClose: () => void;
   onWaiverChange: () => void;
-  busy: boolean; runId: string; token: string; role: Role;
+  busy: boolean; runId: string; token: string; role: Role; startClosing?: boolean;
 }) {
   const [minimized, setMinimized] = useState(false);
   useEffect(() => {
@@ -427,7 +431,7 @@ function FindingPanel({ finding, remediation, device, onDecision, onApply, onRol
         onApprove={() => onDecision(true)} onReject={() => onDecision(false)} onMarkApplied={onApply} onRollback={onRollback} />
       <TwinPanel twin={remediation.twin} />
     </section>}
-    <WaiverPanel finding={finding} runId={runId} token={token} role={role} onChanged={onWaiverChange} />
+    <WaiverPanel finding={finding} runId={runId} token={token} role={role} onChanged={onWaiverChange} startOpen={startClosing} />
     <HistoryPanel runId={runId} controlId={finding.control_id} token={token} />
     <SimulationPanel runId={runId} controlId={finding.control_id} token={token} />
     <TopologyPanel runId={runId} token={token} affected={finding.blast_radius} />
@@ -821,7 +825,7 @@ export default function Home() {
   // regenerated tree on every reload while logged in.
   const [token, setToken] = useState(""); const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("admin");
-  const [audit, setAudit] = useState<AuditRun | null>(null); const [selected, setSelected] = useState<Finding | null>(null);
+  const [audit, setAudit] = useState<AuditRun | null>(null); const [selected, setSelected] = useState<Finding | null>(null); const [closing, setClosing] = useState(false);
   const [inventory, setInventory] = useState<AuditRun[]>([]);
   const [remediations, setRemediations] = useState<Remediation[]>([]); const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState(""); const [error, setError] = useState(""); const [dragging, setDragging] = useState(false);
@@ -994,8 +998,8 @@ export default function Home() {
           <section className="metrics">{audit.summary.compliance_score !== null ? <div className="score-card"><ScoreRing value={audit.summary.control_pass_rate ?? audit.summary.compliance_score} /><div><p>Prototype checks passed</p><strong>{audit.summary.controls_passed ?? 0} of {audit.summary.controls_evaluated ?? 11} checks passed</strong><span>CIS-inspired demo rules · not a certification claim</span>{(audit.summary.waived ?? 0) > 0 && <span className="waived-note">{audit.summary.waived} waived (accepted risk) · score without waivers {audit.summary.score_without_waivers}</span>}<span className="verdict-badge" title="Every PASS/FAIL comes from version-controlled OPA/Rego rules; no language model is involved in the decision.">✓ DETERMINISTIC VERDICT · OPA POLICY {audit.policy_bundle_version || "cis-generic-level1@1.0.0"}</span></div></div> : <div className="empty-card"><p>Not yet evaluated.</p><span>Parsing evidence requires human review before a compliance score exists.</span></div>}{severityOrder.map((level) => <div className="metric" key={level}><span className={`dot ${level.toLowerCase()}`} /><p>{level}</p><strong>{audit.summary.by_severity[level] || 0}</strong></div>)}</section>
           <ConfidenceLedger device={audit.device} status={audit.status} />
           <TrustPanel runId={audit.id} token={token} />
-          <section className="results-layout"><div className="findings"><div className="section-title"><div><p className="eyebrow">PASS / FAIL · RISK SEVERITY</p><h2>Findings</h2></div><span>{visibleFindings.length === audit.findings.length ? `${audit.findings.length} failed controls` : `${visibleFindings.length} of ${audit.findings.length} shown`}</span></div><div className="finding-filters"><input type="search" value={findingQuery} onChange={(e) => setFindingQuery(e.target.value)} placeholder="Filter by control, title or evidence" aria-label="Filter findings" /><select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value as "ALL" | Severity)} aria-label="Filter by severity"><option value="ALL">All severities</option>{severityOrder.map((level) => <option key={level} value={level}>{level}</option>)}</select></div><div className="finding-list">{visibleFindings.length === 0 && <p className="source" style={{ padding: "14px 17px" }}>No findings match this filter.</p>}{visibleFindings.map((finding) => { const proposal = remediations.find((item) => item.control_id === finding.control_id); return <button key={finding.control_id} className={selected?.control_id === finding.control_id ? "selected" : ""} onClick={() => setSelected(finding)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><div><strong>{finding.title}</strong><p>{finding.control_id} · {finding.evidence}</p></div><span className="finding-state">{finding.waiver ? "WAIVED" : proposal?.applied_at ? "APPLIED" : proposal?.approval_status === "APPROVED" ? "✓ APPROVED" : proposal ? (proposal.preflight_status || proposal.preflight?.status) : "REVIEW"}</span><b>›</b></button>; })}</div><ControlResults results={audit.control_results} /></div></section>
-          {selected && <FindingPanel finding={selected} remediation={selectedRemediation} device={{ hostname: audit.device?.hostname || audit.original_filename, vendor: audit.device?.detected_vendor || "Unrecognized", os: audit.device?.detected_os }} onDecision={decide} onApply={applyFix} onRollback={rollbackFix} onClose={() => setSelected(null)} onWaiverChange={refreshAudit} busy={busy === "decision"} runId={audit.id} token={token} role={role} />}
+          <section className="results-layout"><div className="findings"><div className="section-title"><div><p className="eyebrow">PASS / FAIL · RISK SEVERITY</p><h2>Findings</h2></div><span>{visibleFindings.length === audit.findings.length ? `${audit.findings.length} failed controls` : `${visibleFindings.length} of ${audit.findings.length} shown`}</span></div><div className="finding-filters"><input type="search" value={findingQuery} onChange={(e) => setFindingQuery(e.target.value)} placeholder="Filter by control, title or evidence" aria-label="Filter findings" /><select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value as "ALL" | Severity)} aria-label="Filter by severity"><option value="ALL">All severities</option>{severityOrder.map((level) => <option key={level} value={level}>{level}</option>)}</select></div><div className="finding-list">{visibleFindings.length === 0 && <p className="source" style={{ padding: "14px 17px" }}>No findings match this filter.</p>}{visibleFindings.map((finding) => { const proposal = remediations.find((item) => item.control_id === finding.control_id); return <div key={finding.control_id} className="finding-row"><button className={`finding-open${selected?.control_id === finding.control_id ? " selected" : ""}`} onClick={() => { setClosing(false); setSelected(finding); }}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><div><strong>{finding.title}</strong><p>{finding.control_id} · {finding.evidence}</p></div><span className="finding-state">{finding.waiver ? "WAIVED" : proposal?.applied_at ? "APPLIED" : proposal?.approval_status === "APPROVED" ? "✓ APPROVED" : proposal ? (proposal.preflight_status || proposal.preflight?.status) : "REVIEW"}</span><b>›</b></button>{role === "admin" && !finding.waiver && <button className="secondary row-close" aria-label={`Close violation ${finding.control_id}`} onClick={() => { setClosing(true); setSelected(finding); }}>Close…</button>}</div>; })}</div><ControlResults results={audit.control_results} /></div></section>
+          {selected && <FindingPanel finding={selected} remediation={selectedRemediation} device={{ hostname: audit.device?.hostname || audit.original_filename, vendor: audit.device?.detected_vendor || "Unrecognized", os: audit.device?.detected_os }} onDecision={decide} onApply={applyFix} onRollback={rollbackFix} onClose={() => setSelected(null)} onWaiverChange={refreshAudit} busy={busy === "decision"} runId={audit.id} token={token} role={role} startClosing={closing} />}
         </>}
       </div>}
   </main>;
