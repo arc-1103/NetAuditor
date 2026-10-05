@@ -93,11 +93,21 @@ def upstream_error(response: httpx.Response) -> HTTPException:
         detail = "Upstream service request failed"
     return HTTPException(status_code=response.status_code, detail=detail)
 
+
+# Optional services (e.g. learning in the `advanced` profile) may not be running.
+@app.exception_handler(httpx.ConnectError)
+async def upstream_unreachable(request: Request, exc: httpx.ConnectError) -> JSONResponse:
+    host = exc.request.url.host
+    logger.warning("Upstream %s unreachable for %s: %s", host, request.url.path, exc)
+    return JSONResponse({"detail": f"{host} service is not running"}, status_code=503)
+
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8001")
 COMPLIANCE_URL = os.getenv("COMPLIANCE_URL", "http://compliance:8002")
 LEARNING_URL = os.getenv("LEARNING_URL", "http://learning:8003")
 REMEDIATION_URL = os.getenv("REMEDIATION_URL", "http://remediation:8004")
 REPORTING_URL = os.getenv("REPORTING_URL", "http://reporting:8005")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct-q4_K_M")
 
 
 class LoginRequest(BaseModel):
@@ -117,6 +127,11 @@ class LearningMapRequest(BaseModel):
     vendor: str = "unknown"
     os: str | None = None
     access_tier: str = "admin"  # public | admin: who may retrieve this mapping
+
+
+class ExplainRequest(BaseModel):
+    title: str = Field(max_length=500)
+    evidence: str = Field(max_length=8000)
 
 
 class LearningSearchRequest(BaseModel):
@@ -389,6 +404,27 @@ async def generate_report(body: ReportGenerateRequest, user=Depends(require_read
     if resp.status_code >= 400:
         raise upstream_error(resp)
     return resp.json()
+
+
+@app.post("/api/explain")
+async def explain_finding(body: ExplainRequest, user=Depends(require_reader)):
+    # Plain-language explanation only; the verdict stays with OPA.
+    async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        resp = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json={
+            "model": OLLAMA_MODEL,
+            "temperature": 0,
+            "max_tokens": 100,
+            "messages": [
+                {"role": "system", "content": "Explain network security findings in two short, non-technical sentences. Do not invent facts."},
+                {"role": "user", "content": f"Finding: {body.title}\nEvidence: {body.evidence}"},
+            ],
+        })
+    if resp.status_code >= 400:
+        raise upstream_error(resp)
+    answer = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+    if not answer:
+        raise HTTPException(status_code=502, detail="Model returned no explanation")
+    return {"answer": answer}
 
 
 @app.get("/api/learning/queue")

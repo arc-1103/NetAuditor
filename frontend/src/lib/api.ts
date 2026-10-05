@@ -7,7 +7,16 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 const QWEN_BASE = process.env.NEXT_PUBLIC_QWEN_BASE_URL || "http://localhost:11434";
 export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_API !== "false";
 
-export async function askLocalQwen(title: string, evidence: string): Promise<string> {
+export async function askLocalQwen(title: string, evidence: string, token: string): Promise<string> {
+  if (!USE_MOCK) {
+    const { answer } = await request<{ answer: string }>("/api/explain", token, {
+      method: "POST",
+      signal: AbortSignal.timeout(120_000),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, evidence }),
+    });
+    return answer;
+  }
   const response = await fetch(`${QWEN_BASE}/v1/chat/completions`, {
     method: "POST",
     signal: AbortSignal.timeout(30_000),

@@ -197,6 +197,34 @@ def test_get_learning_queue_proxies_to_learning(client, fake_proxy):
     assert call["url"].endswith("/learning/queue")
 
 
+def test_explain_proxies_to_ollama_with_fixed_prompt(client, fake_proxy):
+    fake_proxy(FakeResponse(200, {"choices": [{"message": {"content": " Telnet is unencrypted. "}}]}))
+
+    resp = client.post("/api/explain", json={"title": "Telnet enabled", "evidence": "transport input telnet"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"answer": "Telnet is unencrypted."}
+    call = last_proxy_call()
+    assert call["url"].endswith("/v1/chat/completions")
+    assert call["kwargs"]["json"]["messages"][0]["role"] == "system"
+    assert "transport input telnet" in call["kwargs"]["json"]["messages"][1]["content"]
+
+
+def test_unreachable_upstream_returns_503_not_500(client, monkeypatch):
+    import httpx
+
+    class DownClient(FakeAsyncClient):
+        async def get(self, url, **kwargs):
+            raise httpx.ConnectError("Name or service not known", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda *a, **k: DownClient(FakeResponse()))
+
+    resp = client.get("/api/learning/queue")
+
+    assert resp.status_code == 503
+    assert resp.json() == {"detail": "learning service is not running"}
+
+
 def test_submit_learning_map_proxies_with_user_attribution(client, fake_proxy):
     fake_proxy(FakeResponse(200, {"confirmed": True}))
     body = {

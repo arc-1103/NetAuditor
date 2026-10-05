@@ -404,7 +404,7 @@ function FindingPanel({ finding, remediation, device, onDecision, onApply, onRol
   const [qwenStatus, setQwenStatus] = useState("");
   async function explain() {
     setQwenStatus("asking"); setQwenAnswer("");
-    try { setQwenAnswer(await askLocalQwen(finding.title, finding.evidence)); setQwenStatus("ready"); }
+    try { setQwenAnswer(await askLocalQwen(finding.title, finding.evidence, token)); setQwenStatus("ready"); }
     catch { setQwenStatus("error"); }
   }
   return <>

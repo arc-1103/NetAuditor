@@ -46,7 +46,10 @@ async def _ingest(file, x_user_id: str | None) -> dict:
         uploaded_by = None
 
     run_id = str(uuid.uuid4())
-    await create_audit_run(run_id, stored, uploaded_by)
+    if not await create_audit_run(run_id, stored, uploaded_by):
+        # Lost a race with a concurrent upload of the same bytes (unique
+        # index on file_hash): reopen the winner's run, don't enqueue twice.
+        return {"job_id": await get_audit_run_id_by_hash(stored["file_hash"]), "status": "already_processed"}
     # `credential_evidence` (from validate_and_store) is already persisted
     # inside create_audit_run — see docs/ArchitecturalChanges.md §2.
 

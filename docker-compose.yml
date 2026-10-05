@@ -55,6 +55,7 @@ services:
       retries: 5
       start_period: 10s
     networks: [audit-net]
+    restart: unless-stopped
 
   chromadb:
     image: chromadb/chroma
@@ -78,6 +79,7 @@ services:
       timeout: 5s
       retries: 5
     networks: [audit-net]
+    restart: unless-stopped
 
   ollama:
     image: ollama/ollama

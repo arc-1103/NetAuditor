@@ -26,15 +26,19 @@ async def get_audit_run_id_by_hash(file_hash: str) -> str | None:
         return result.scalar_one_or_none()
 
 
-async def create_audit_run(run_id: str, stored: dict, uploaded_by: str | None) -> None:
+async def create_audit_run(run_id: str, stored: dict, uploaded_by: str | None) -> bool:
+    """Insert the run; False if another upload of the same bytes won the race
+    (unique index on file_hash, migration 0014), in which case nothing is written."""
     async with async_session() as session:
-        await session.execute(
+        result = await session.execute(
             text(
                 """
                 INSERT INTO audit_runs
                     (id, file_hash, original_filename, storage_path, uploaded_by, status, credential_evidence)
                 VALUES
                     (:id, :file_hash, :original_filename, :storage_path, :uploaded_by, 'INGESTED', :credential_evidence)
+                ON CONFLICT (file_hash) DO NOTHING
+                RETURNING id
                 """
             ),
             {
@@ -46,4 +50,6 @@ async def create_audit_run(run_id: str, stored: dict, uploaded_by: str | None) -
                 "credential_evidence": json.dumps(stored.get("credential_evidence") or []),
             },
         )
+        inserted = result.scalar_one_or_none() is not None
         await session.commit()
+        return inserted

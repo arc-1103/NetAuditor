@@ -32,6 +32,7 @@ async def sqlite_session(monkeypatch):
                 """
             )
         )
+        await conn.execute(text("CREATE UNIQUE INDEX uq_audit_runs_file_hash ON audit_runs (file_hash)"))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(db, "async_session", session_factory)
 
@@ -115,3 +116,14 @@ async def test_create_audit_run_defaults_credential_evidence_to_empty_list(sqlit
         row = result.mappings().first()
 
     assert json.loads(row["credential_evidence"]) == []
+
+
+async def test_create_audit_run_returns_false_and_keeps_first_row_on_duplicate_hash(sqlite_session):
+    stored = {"file_hash": "i" * 64, "storage_path": "raw-configs/iii.cfg", "original_filename": "device.cfg"}
+
+    assert await db.create_audit_run("run-first", stored, None) is True
+    assert await db.create_audit_run("run-second", stored, None) is False
+
+    async with sqlite_session() as session:
+        ids = (await session.execute(text("SELECT id FROM audit_runs WHERE file_hash = :h"), {"h": "i" * 64})).scalars().all()
+    assert ids == ["run-first"]

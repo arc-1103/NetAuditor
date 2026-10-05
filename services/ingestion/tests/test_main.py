@@ -94,6 +94,22 @@ def test_upload_reopens_the_existing_run_for_an_already_ingested_hash(client, mo
     create_audit_run_mock.assert_not_called()
 
 
+def test_upload_losing_insert_race_reopens_winner_and_does_not_enqueue(client, monkeypatch):
+    stored = {"file_hash": "e" * 64, "storage_path": "raw-configs/eee.cfg", "original_filename": "d.cfg", "raw_text": "hostname r1\n"}
+    # Dedup check misses (winner not committed yet), then the insert loses; the re-read finds the winner.
+    lookup = AsyncMock(side_effect=[None, "winner-run"])
+    enqueue = AsyncMock()
+    monkeypatch.setattr("app.main.validate_and_store", AsyncMock(return_value=stored))
+    monkeypatch.setattr("app.main.get_audit_run_id_by_hash", lookup)
+    monkeypatch.setattr("app.main.create_audit_run", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.main.enqueue_parsing_job", enqueue)
+
+    resp = client.post("/upload", files={"file": ("d.cfg", b"hostname r1\n", "text/plain")})
+
+    assert resp.json() == {"job_id": "winner-run", "status": "already_processed"}
+    enqueue.assert_not_called()
+
+
 def test_upload_without_user_header_stores_no_attribution(client, monkeypatch):
     stored = {
         "file_hash": "d" * 64,
