@@ -5,6 +5,7 @@ connection pattern for the shared Postgres instance.
 """
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
@@ -24,6 +25,19 @@ async def get_audit_run_id_by_hash(file_hash: str) -> str | None:
             {"file_hash": file_hash},
         )
         return result.scalar_one_or_none()
+
+
+async def is_stranded(run_id: str, older_than: timedelta = timedelta(minutes=10)) -> bool:
+    """True if the run never left INGESTED long after upload, i.e. its parsing
+    job was lost (e.g. the broker restarted) rather than still in flight."""
+    # ponytail: fixed age cutoff; parsing takes seconds, so 10 min is safe headroom
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - older_than
+    async with async_session() as session:
+        result = await session.execute(
+            text("SELECT 1 FROM audit_runs WHERE id = :id AND status = 'INGESTED' AND created_at < :cutoff"),
+            {"id": run_id, "cutoff": cutoff},
+        )
+        return result.scalar_one_or_none() is not None
 
 
 async def create_audit_run(run_id: str, stored: dict, uploaded_by: str | None) -> bool:

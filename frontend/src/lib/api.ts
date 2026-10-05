@@ -125,7 +125,7 @@ export async function getAudit(runId: string, token: string): Promise<AuditRun> 
     if (["EVALUATED", "COMPLETE", "NEEDS_REVIEW", "FAILED"].includes(run.status)) return run;
     await wait(1500);
   }
-  throw new Error("The audit is still processing. Reopen it from audit history shortly.");
+  throw new Error("The audit is still processing. Reopen it from Device inventory shortly.");
 }
 
 export async function listAuditRunIds(token: string, limit = 20): Promise<string[]> {

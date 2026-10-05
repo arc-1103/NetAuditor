@@ -4,7 +4,7 @@ AuditRun -> chunk -> enqueue). uploader/db/queue calls are mocked at the
 app.main boundary so no MinIO/Postgres/Redis is required — those pieces
 each have their own dedicated unit tests.
 """
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,6 +84,7 @@ def test_upload_reopens_the_existing_run_for_an_already_ingested_hash(client, mo
     create_audit_run_mock = AsyncMock()
     monkeypatch.setattr("app.main.validate_and_store", AsyncMock(return_value=stored))
     monkeypatch.setattr("app.main.get_audit_run_id_by_hash", AsyncMock(return_value="existing-run-1"))
+    monkeypatch.setattr("app.main.is_stranded", AsyncMock(return_value=False))
     monkeypatch.setattr("app.main.create_audit_run", create_audit_run_mock)
 
     resp = client.post("/upload", files={"file": ("device.cfg", b"hostname r1\n", "text/plain")})
@@ -91,6 +92,23 @@ def test_upload_reopens_the_existing_run_for_an_already_ingested_hash(client, mo
     assert resp.status_code == 200
     body = resp.json()
     assert body == {"job_id": "existing-run-1", "status": "already_processed"}
+    create_audit_run_mock.assert_not_called()
+
+
+def test_upload_requeues_a_stranded_run_under_the_same_id(client, monkeypatch):
+    stored = {"file_hash": "f" * 64, "storage_path": "raw-configs/fff.cfg", "original_filename": "d.cfg", "raw_text": "hostname r1\n"}
+    create_audit_run_mock = AsyncMock()
+    enqueue = MagicMock(side_effect=lambda run_id, *a: {"job_id": run_id})
+    monkeypatch.setattr("app.main.validate_and_store", AsyncMock(return_value=stored))
+    monkeypatch.setattr("app.main.get_audit_run_id_by_hash", AsyncMock(return_value="stuck-run"))
+    monkeypatch.setattr("app.main.is_stranded", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.main.create_audit_run", create_audit_run_mock)
+    monkeypatch.setattr("app.main.enqueue_parsing_job", enqueue)
+
+    resp = client.post("/upload", files={"file": ("d.cfg", b"hostname r1\n", "text/plain")})
+
+    assert resp.json() == {"job_id": "stuck-run", "status": "queued"}
+    assert enqueue.call_args.args[0] == "stuck-run"
     create_audit_run_mock.assert_not_called()
 
 

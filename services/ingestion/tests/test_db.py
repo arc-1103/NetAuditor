@@ -80,6 +80,20 @@ async def test_get_audit_run_id_by_hash_returns_the_run_after_insert(sqlite_sess
     assert await db.get_audit_run_id_by_hash("g" * 64) == "run-3"
 
 
+async def test_is_stranded_only_for_old_runs_still_ingested(sqlite_session):
+    for run_id, h, status, age in [("old", "j", "INGESTED", "-1 hour"), ("fresh", "k", "INGESTED", "-1 minute"), ("done", "l", "EVALUATED", "-1 hour")]:
+        async with sqlite_session() as s:
+            await s.execute(
+                text(f"INSERT INTO audit_runs (id, file_hash, storage_path, status, created_at) VALUES (:id, :h, 'p', :status, datetime('now', '{age}'))"),
+                {"id": run_id, "h": h * 64, "status": status},
+            )
+            await s.commit()
+
+    assert await db.is_stranded("old") is True
+    assert await db.is_stranded("fresh") is False
+    assert await db.is_stranded("done") is False
+
+
 async def test_get_audit_run_id_by_hash_returns_none_when_absent(sqlite_session):
     assert await db.get_audit_run_id_by_hash("h" * 64) is None
 

@@ -9,7 +9,7 @@ from app.collector import CollectorError, collect_config
 from app.uploader import validate_and_store
 from app.chunker import chunk_hierarchical
 from app.queue_producer import enqueue_parsing_job
-from app.db import create_audit_run, get_audit_run_id_by_hash
+from app.db import create_audit_run, get_audit_run_id_by_hash, is_stranded
 
 app = FastAPI(title="netaudit-ingestion")
 
@@ -33,7 +33,7 @@ async def _ingest(file, x_user_id: str | None) -> dict:
     # upload's, so callers (frontend's uploadConfig -> getAudit) need no
     # special-casing.
     existing_run_id = await get_audit_run_id_by_hash(stored["file_hash"])
-    if existing_run_id:
+    if existing_run_id and not await is_stranded(existing_run_id):
         return {"job_id": existing_run_id, "status": "already_processed"}
 
     # Gateway forwards the JWT subject as X-User-Id; this hop itself is
@@ -44,6 +44,11 @@ async def _ingest(file, x_user_id: str | None) -> dict:
         uploaded_by = str(uuid.UUID(x_user_id)) if x_user_id else None
     except ValueError:
         uploaded_by = None
+
+    if existing_run_id:
+        # Its parsing job was lost; queue it again under the same run.
+        job = enqueue_parsing_job(existing_run_id, stored, chunk_hierarchical(stored["raw_text"]), uploaded_by)
+        return {"job_id": job["job_id"], "status": "queued"}
 
     run_id = str(uuid.uuid4())
     if not await create_audit_run(run_id, stored, uploaded_by):

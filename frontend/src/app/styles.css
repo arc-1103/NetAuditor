@@ -420,9 +420,9 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .teach-form input:focus { border-color:var(--teal); }
 .teach-form .decision-row { margin-top:4px; }
 
-.chain-step { display:grid; grid-template-columns:110px 1fr; gap:10px; padding:8px 0; border-top:1px solid var(--line-soft); font-size:11px; }
+.chain-step { display:grid; grid-template-columns:150px 1fr; gap:12px; padding:8px 0; border-top:1px solid var(--line-soft); font-size:11px; }
 .chain-step:first-child { border-top:0; }
-.chain-step span:first-child { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+.chain-step span:first-child { color:var(--dim); font-size:11px; font-weight:600; overflow-wrap:anywhere; }
 .trust-row-item { display:grid; grid-template-columns:1.4fr 1fr 1fr 70px; gap:8px; padding:8px 0; border-top:1px solid var(--line-soft); font-size:11px; align-items:center; }
 .trust-row-item:first-child { border-top:0; }
 .trust-row-item code { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

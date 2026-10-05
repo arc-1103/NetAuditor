@@ -315,7 +315,7 @@ function TopologyPanel({ runId, token, affected }: { runId: string; token: strin
   return <section className="topology"><h3>Network neighborhood</h3>
     {failed ? <p className="source">Topology service unavailable.</p>
       : !graph ? <p className="source">Loading topology…</p>
-      : others.length === 0 ? <p className="source">No routing neighbors known for this device. Topology needs Neo4j (docker compose --profile advanced) and other audited devices that peer with it.</p>
+      : others.length === 0 ? <p className="source">No routing neighbors known for this device. Neighbors appear once other audited devices that peer with it are available.</p>
       : <>
         <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Routing neighborhood: ${others.length} connected device${others.length === 1 ? "" : "s"}`}>
           {graph.edges.map((e, i) => { const a = pos.get(e.source), b = pos.get(e.target); return a && b ? <line key={i} className="topo-edge" x1={a.x} y1={a.y} x2={b.x} y2={b.y}><title>{e.protocol || "routes to"}</title></line> : null; })}
@@ -375,11 +375,11 @@ function ProvenancePanel({ runId, controlId, token }: { runId: string; controlId
   return <section>
     <h3>Provenance</h3>
     {chain.events.length === 0 ? <p className="muted">No ledger events recorded yet for this control.</p> : chain.events.map((event, index) => <div className="chain-step" key={index}>
-      <span>{event.event_type}</span>
+      <span>{event.event_type.charAt(0) + event.event_type.slice(1).toLowerCase().replace(/_/g, " ")}</span>
       <span>{event.actor} · {new Date(event.created_at).toLocaleString()}{event.ruleset_version ? ` · ruleset ${event.ruleset_version}` : ""}{event.id && <> · <button className="link-button" onClick={() => downloadProof(event.id as string)}>inclusion proof</button></>}</span>
     </div>)}
     {proofMessage && <p className="source">{proofMessage}</p>}
-    <p className="source">An inclusion proof is checked offline with <code>tools/verify_ledger_proof.py</code>; it proves this event is in a signed, chained seal.</p>
+    <p className="source">Every event is sealed in a signed, tamper-evident ledger. Download an inclusion proof to verify it independently.</p>
     {chain.policy && <p className="source">Evaluated against policy bundle <b>{String(chain.policy.policy_bundle_version)}</b>, baseline SHA-256 {String(chain.policy.baseline_sha256).slice(0, 16)}…</p>}
   </section>;
 }
@@ -421,7 +421,7 @@ function FindingPanel({ finding, remediation, device, onDecision, onApply, onRol
     {!minimized && <>
     <section><h3>What we found</h3><pre className="evidence">{finding.evidence}</pre><EvidenceLines finding={finding} /></section>
     <section><h3>Why this matters</h3><p className="muted">In simple terms, this setting may let an attacker reach or control the device more easily. A person must review every suggested fix before approval.</p>{finding.blast_radius?.length ? <p className="blast">Other devices that may be affected · {finding.blast_radius.join(" · ")}</p> : null}</section>
-    <section className="qwen-box"><div className="remediation-title"><h3>Live local AI</h3><span className={`model-state ${qwenStatus}`}>{qwenStatus === "ready" ? "QWEN LIVE" : "OPTIONAL"}</span></div><p className="muted">Ask locally running Qwen to explain this result in everyday language. It explains; fixed rules still decide.</p><button className="secondary" onClick={explain} disabled={qwenStatus === "asking"}>{qwenStatus === "asking" ? "Qwen is thinking…" : "Ask Qwen to explain"}</button>{qwenAnswer && <p className="ai-answer">{qwenAnswer}</p>}{qwenStatus === "error" && <p className="source">Local model unavailable. Run: ollama serve</p>}</section>
+    <section className="qwen-box"><div className="remediation-title"><h3>Live local AI</h3><span className={`model-state ${qwenStatus}`}>{qwenStatus === "ready" ? "QWEN LIVE" : "OPTIONAL"}</span></div><p className="muted">Ask locally running Qwen to explain this result in everyday language. It explains; fixed rules still decide.</p><button className="secondary" onClick={explain} disabled={qwenStatus === "asking"}>{qwenStatus === "asking" ? "Qwen is thinking…" : "Ask Qwen to explain"}</button>{qwenAnswer && <p className="ai-answer">{qwenAnswer}</p>}{qwenStatus === "error" && <p className="source">The AI explanation isn't available right now. The finding and its verdict are unaffected.</p>}</section>
     {!remediation ? <div className="empty-card"><p>No proposal generated yet.</p><span>Generate deterministic fixes for this audit from the toolbar.</span></div> : <section>
       <RemediationActionCard finding={finding} remediation={remediation} device={device} role={role} busy={busy}
         onApprove={() => onDecision(true)} onReject={() => onDecision(false)} onMarkApplied={onApply} onRollback={onRollback} />
