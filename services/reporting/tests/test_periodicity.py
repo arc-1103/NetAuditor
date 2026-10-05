@@ -82,3 +82,8 @@ def test_recurring_monday_spikes_in_new_violations_are_detected_as_highs():
     result = detect_cycle(count_per_day(events), value_key="count", fill="zero", mark="high", min_amplitude=2.0)
     assert result["detected"] and round(result["period_days"]) == 7
     assert {date.fromisoformat(m["date"]).weekday() for m in result["markers"]} == {0}
+
+
+def test_all_negative_autocorrelation_does_not_crash():
+    from app.periodicity import _repeat_period
+    assert _repeat_period([1.0, 0.0, -0.5, -0.1, -0.3, -0.2, -0.4], 12)[0] == 3

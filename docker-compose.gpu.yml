@@ -1,0 +1,13 @@
+# NVIDIA GPU for Ollama. run.sh adds this file only when Docker has the nvidia
+# runtime; on macOS / CPU-only hosts it is skipped so compose never errors.
+services:
+  ollama:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

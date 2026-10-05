@@ -65,10 +65,12 @@ def _spectral_share(values: list[float], n: int, period: float) -> float:
 
 def _repeat_period(autocorr: list[float], n: int) -> tuple[int, float]:
     """(lag, autocorrelation) of the shortest lag that repeats nearly as well as the best one.
-    Taking the shortest avoids reporting 14 days for a 7-day cycle."""
+    Taking the shortest avoids reporting 14 days for a 7-day cycle. The threshold is
+    best - 10% (not 0.9*best): when every autocorrelation is negative 0.9*best sits
+    above best, nothing matches and next() raised StopIteration (HTTP 500)."""
     lags = range(2, n // 2 + 1)
     best = max(autocorr[lag] for lag in lags)
-    lag = next(lag for lag in lags if autocorr[lag] >= 0.9 * best)
+    lag = next(lag for lag in lags if autocorr[lag] >= best - 0.1 * abs(best))
     return lag, autocorr[lag]
 
 
