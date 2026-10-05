@@ -20,6 +20,8 @@ if [[ -f docker-compose.demo.yml ]]; then
   echo "Using docker-compose.demo.yml overrides"
 fi
 docker compose up -d --build "$@"
+# Postgres only runs init.sql on a new volume; migrations are idempotent, so apply them every start.
+bash scripts/apply_migrations.sh >/dev/null && echo "Database migrations applied."
 
 echo
 docker compose ps -a --format 'table {{.Name}}\t{{.Status}}'

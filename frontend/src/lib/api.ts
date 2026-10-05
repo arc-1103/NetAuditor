@@ -120,7 +120,8 @@ export async function collectConfig(target: CollectTarget, token: string) {
 
 export async function getAudit(runId: string, token: string): Promise<AuditRun> {
   if (USE_MOCK) { await wait(1050); return { ...structuredClone(mockAudit), id: runId }; }
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  // ~4 min: a cold model load alone can take ~2.5 min.
+  for (let attempt = 0; attempt < 160; attempt += 1) {
     const run = await request<AuditRun>(`/api/audit-runs/${runId}`, token);
     if (["EVALUATED", "COMPLETE", "NEEDS_REVIEW", "FAILED"].includes(run.status)) return run;
     await wait(1500);
